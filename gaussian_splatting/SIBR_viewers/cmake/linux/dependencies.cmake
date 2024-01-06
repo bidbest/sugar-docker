@@ -124,7 +124,7 @@ sibr_addlibrary(
 
 # CLUSTER
 #find_package(embree 3.0 REQUIRED PATHS "/data/graphdeco/share/embree/usr/local/lib64/cmake/" )
-find_package(embree 3.0 )
+find_package(EMBREE)
 
 ###################
 ## Find eigen3
@@ -245,7 +245,7 @@ sibr_addlibrary(NAME OpenCV #VERBOSE ON
         MSVC17 "https://repo-sam.inria.fr/fungraph/dependencies/sibr/~0.9/opencv4-8.7z" 
 		SET ${opencv_set_arguments}
     )
-find_package(OpenCV 4.5 REQUIRED) ## Use directly the OpenCVConfig.cmake provided
+find_package(OpenCV 4.2 REQUIRED) ## Use directly the OpenCVConfig.cmake provided
 ## FOR CLUSTER
 ###find_package(OpenCV 4.5 REQUIRED PATHS "/data/graphdeco/share/opencv/usr/local/lib64/cmake/opencv4/" ) ## Use directly the OpenCVConfig.cmake provided
 

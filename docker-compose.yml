@@ -1,0 +1,35 @@
+version: "3.8"
+services:
+  sugar:
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    build: .
+    image: sugar:cuda-11.8
+    network_mode: "host"
+    environment:
+      - DISPLAY=:1
+      - MESA_GL_VERSION_OVERRIDE=4.5 # Needed for running viewers
+    volumes:
+      # This volume is needed for WSL
+      # - type: bind
+      #   source: /mnt/wslg/.X11-unix
+      #   target: /tmp/.X11-unix
+      ##########################
+      - type: bind
+        source: /tmp/.X11-unix
+        target: /tmp/.X11-unix
+      # This is needed to import your own datasets
+      - type: bind
+        source: ./
+        target: /sugar
+      - type: bind
+        source: ../datasets_gs
+        target: /sugar/datasets_gs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
