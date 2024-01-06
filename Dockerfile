@@ -26,10 +26,11 @@ RUN apt install -y git && \
 ARG TORCH_CUDA_ARCH_LIST="3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6"
 
 COPY environment.yml /tmp/environment.yml
+COPY gaussian_splatting/ /tmp/gaussian_splatting/
 WORKDIR /tmp/
 RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gaussian_splatting
 RUN rm /tmp/environment.yml
 
-COPY gaussian_splatting/ /tmp/gaussian_splatting/
+
 
 WORKDIR /sugar
