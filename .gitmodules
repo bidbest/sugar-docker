@@ -1,0 +1,3 @@
+[submodule "submodules/gaussian-splatting-docker"]
+	path = submodules/gaussian-splatting-docker
+	url = git@github.com:bidbest/gaussian-splatting-docker.git
