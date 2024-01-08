@@ -5,3 +5,8 @@ sed -i 's/find_package(OpenCV 4\.5 REQUIRED)/find_package(OpenCV 4.2 REQUIRED)/g
 sed -i 's/find_package(embree 3\.0 )/find_package(EMBREE)/g' dependencies.cmake
 mv /sugar/submodules/gaussian-splatting-docker/SIBR_viewers/cmake/linux/Modules/FindEmbree.cmake /sugar/submodules/gaussian-splatting-docker/SIBR_viewers/cmake/linux/Modules/FindEMBREE.cmake
 sed -i 's/\bembree\b/embree3/g' /sugar/submodules/gaussian-splatting-docker/SIBR_viewers/src/core/raycaster/CMakeLists.txt
+
+cd /sugar/submodules/gaussian-splatting-docker/SIBR_viewers
+cmake -Bbuild . -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j24 --target install
+echo "All done!"
