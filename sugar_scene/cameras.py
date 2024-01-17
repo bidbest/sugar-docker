@@ -13,7 +13,7 @@ from sugar_utils.general_utils import PILtoTorch
 
 
 def load_gs_cameras(source_path, gs_output_path, image_resolution=1, 
-                    load_gt_images=True, max_img_size=1920):
+                    load_gt_images=True, max_img_size=int(1920/2)):
     """Loads Gaussian Splatting camera parameters from a COLMAP reconstruction.
 
     Args:

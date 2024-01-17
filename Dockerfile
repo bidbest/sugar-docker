@@ -31,6 +31,35 @@ WORKDIR /tmp/
 RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gaussian_splatting
 RUN rm /tmp/environment.yml
 
+# Install colmap
+RUN apt update && apt-get install -y \
+    git \
+    cmake \
+    ninja-build \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-filesystem-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgoogle-glog-dev \
+    libgtest-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libceres-dev
 
+RUN git clone https://github.com/colmap/colmap.git
+WORKDIR /tmp/colmap
+RUN git checkout 98940342171e27fbf7a52223a39b5b3f699f23b8 &&\
+    mkdir build && cd build &&\
+    cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=all-major &&\
+    ninja &&\
+    ninja install
 
 WORKDIR /sugar
