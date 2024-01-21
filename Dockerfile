@@ -63,3 +63,11 @@ RUN git checkout 98940342171e27fbf7a52223a39b5b3f699f23b8 &&\
     ninja install
 
 WORKDIR /sugar
+
+# Default conda project
+RUN echo "conda activate sugar" >> ~/.bashrc
+
+# Set up Meshroom paths
+RUN echo "export ALICEVISION_ROOT=/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/" >> ~/.bashrc &&\
+    echo "export PATH=$PATH:/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/bin/" >> ~/.bashrc &&\
+    echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/lib/" >> ~/.bashrc
