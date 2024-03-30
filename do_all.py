@@ -21,7 +21,7 @@ def do_one(source_p, fps, is_360=False):
 
     if not "input" in files_n:
         print("extracting frames!")
-        extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} {input_p}/img_%03d.png"
+        extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} -pix_fmt rgb8 {input_p}/img_%03d.png" # -pix_fmt rgb8 is needed for HDR 10bit videos
         exit_code = os.system(extract_frames_cmd)
         if exit_code != 0:
             print("error extracting frames")
