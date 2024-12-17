@@ -6,6 +6,20 @@ output*
 *.ply
 *.obj
 sugar_tests.ipynb
+sugar_sh_tests.ipynb
+dev_render_blender_scene.py
+test_environment.yml
+blender/dev_mode.py
+
+# To remove
+frosting*
+extract_shell.py
+extract_frosting_textured_mesh.py
+train_frosting_refined.py
+train_frosting.py
+run_frosting_viewer.py
+render_blender_scene_frosting.py
+sugar_render_blender_package.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

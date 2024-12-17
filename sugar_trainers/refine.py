@@ -5,7 +5,7 @@ import open3d as o3d
 from pytorch3d.loss import mesh_laplacian_smoothing, mesh_normal_consistency
 from pytorch3d.transforms import quaternion_apply, quaternion_invert
 from sugar_scene.gs_model import GaussianSplattingWrapper, fetchPly
-from sugar_scene.sugar_model import SuGaR
+from sugar_scene.sugar_model import SuGaR, convert_refined_sugar_into_gaussians
 from sugar_scene.sugar_optimizer import OptimizationParams, SuGaROptimizer
 from sugar_scene.sugar_densifier import SuGaRDensifier
 from sugar_utils.loss_utils import ssim, l1_loss, l2_loss
@@ -48,7 +48,7 @@ def refined_training(args):
     
         
     # -----Rendering parameters-----
-    compute_color_in_rasterizer = False  # TODO: Try True
+    compute_color_in_rasterizer = True  # TODO: Try True
 
         
     # -----Optimization parameters-----
@@ -222,9 +222,10 @@ def refined_training(args):
         
 
     # -----Log and save-----
-    print_loss_every_n_iterations = 50
+    print_loss_every_n_iterations = 200
     save_model_every_n_iterations = 1_000_000 # 500, 1_000_000  # TODO
-    save_milestones = [2000, 7_000, 15_000]
+    # save_milestones = [2000, 7_000, 15_000]
+    save_milestones = []
 
     # ====================End of parameters====================
 
@@ -235,10 +236,10 @@ def refined_training(args):
             args.output_dir = os.path.join("./output/refined", args.scene_path.split("/")[-2])
             
     # Bounding box
-    if args.bboxmin is None:
+    if (args.bboxmin is None) or (args.bboxmin == 'None'):
         use_custom_bbox = False
     else:
-        if args.bboxmax is None:
+        if (args.bboxmax is None) or (args.bboxmax == 'None'):
             raise ValueError("You need to specify both bboxmin and bboxmax.")
         use_custom_bbox = True
         
@@ -265,10 +266,6 @@ def refined_training(args):
     surface_mesh_normal_consistency_factor = args.normal_consistency_factor    
     n_gaussians_per_surface_triangle = args.gaussians_per_triangle
     n_vertices_in_fg = args.n_vertices_in_fg
-    
-    surface_mesh_normal_consistency_factor = args.normal_consistency_factor    
-    n_gaussians_per_surface_triangle = args.gaussians_per_triangle
-    n_vertices_in_fg = args.n_vertices_in_fg
     num_iterations = args.refinement_iterations
     
     sugar_checkpoint_path = 'sugarfine_' + mesh_name.replace('sugarmesh_', '') + '_normalconsistencyXX_gaussperfaceYY/'
@@ -284,6 +281,9 @@ def refined_training(args):
         fg_bbox_max = args.bboxmax
     
     use_eval_split = args.eval
+    use_white_background = args.white_background
+    
+    export_ply_at_the_end = args.export_ply
     
     ply_path = os.path.join(source_path, "sparse/0/points3D.ply")
     
@@ -302,6 +302,8 @@ def refined_training(args):
         CONSOLE.print("Foreground bounding box min:", fg_bbox_min)
         CONSOLE.print("Foreground bounding box max:", fg_bbox_max)
     CONSOLE.print("Use eval split:", use_eval_split)
+    CONSOLE.print("Use white background:", use_white_background)
+    CONSOLE.print("Export ply at the end:", export_ply_at_the_end)
     CONSOLE.print("----------------------------")
     
     # Setup device
@@ -328,6 +330,7 @@ def refined_training(args):
         load_gt_images=True,
         eval_split=use_eval_split,
         eval_split_interval=n_skip_images_for_eval_split,
+        white_background=use_white_background,
         )
 
     CONSOLE.print(f'{len(nerfmodel.training_cameras)} training images detected.')
@@ -357,10 +360,12 @@ def refined_training(args):
                     colors = colors[start_prune_mask]
             n_points = len(points)
     else:
-        CONSOLE.print("\nLoading SfM point cloud...")
-        pcd = fetchPly(ply_path)
-        points = torch.tensor(pcd.points, device=nerfmodel.device).float().cuda()
-        colors = torch.tensor(pcd.colors, device=nerfmodel.device).float().cuda()
+        # CONSOLE.print("\nLoading SfM point cloud...")
+        # pcd = fetchPly(ply_path)
+        # points = torch.tensor(pcd.points, device=nerfmodel.device).float().cuda()
+        # colors = torch.tensor(pcd.colors, device=nerfmodel.device).float().cuda()
+        points = torch.randn(1000, 3, device=nerfmodel.device)
+        colors = torch.rand(1000, 3, device=nerfmodel.device)
     
         if n_points_at_start is not None:
             n_points = n_points_at_start
@@ -369,7 +374,7 @@ def refined_training(args):
         else:
             n_points = len(points)
             
-    CONSOLE.print(f"Point cloud generated. Number of points: {len(points)}")
+    # CONSOLE.print(f"Point cloud generated. Number of points: {len(points)}")
     
     # Mesh to bind to if needed  TODO
     if bind_to_surface_mesh:
@@ -387,6 +392,12 @@ def refined_training(args):
     
     if not regularize_sdf:
         beta_mode = None
+        
+    # Background tensor if needed
+    if use_white_background:
+        bg_tensor = torch.ones(3, dtype=torch.float, device=nerfmodel.device)
+    else:
+        bg_tensor = torch.zeros(3, dtype=torch.float, device=nerfmodel.device)
     
     # ====================Initialize SuGaR model====================
     # Construct SuGaR model
@@ -543,7 +554,7 @@ def refined_training(args):
                 outputs = sugar.render_image_gaussian_rasterizer( 
                     camera_indices=camera_indices.item(),
                     verbose=False,
-                    bg_color = None,
+                    bg_color = bg_tensor,
                     sh_deg=current_sh_levels-1,
                     sh_rotations=None,
                     compute_color_in_rasterizer=compute_color_in_rasterizer,
@@ -863,4 +874,22 @@ def refined_training(args):
                     )
 
     CONSOLE.print("Final model saved.")
+    
+    if export_ply_at_the_end:
+        # Build path
+        CONSOLE.print("\nExporting ply file with refined Gaussians...")
+        tmp_list = model_path.split(os.sep)
+        tmp_list[-4] = 'refined_ply'
+        tmp_list.pop(-1)
+        tmp_list[-1] = tmp_list[-1] + '.ply'
+        refined_ply_save_dir = os.path.join(*tmp_list[:-1])
+        refined_ply_save_path = os.path.join(*tmp_list)
+        
+        os.makedirs(refined_ply_save_dir, exist_ok=True)
+        
+        # Export and save ply
+        refined_gaussians = convert_refined_sugar_into_gaussians(sugar)
+        refined_gaussians.save_ply(refined_ply_save_path)
+        CONSOLE.print("Ply file exported. This file is needed for using the dedicated viewer.")
+    
     return model_path

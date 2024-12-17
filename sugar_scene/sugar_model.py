@@ -1,4 +1,5 @@
 import torch.nn as nn
+from torch.nn.functional import normalize as torch_normalize
 import open3d as o3d
 from pytorch3d.renderer import TexturesUV, TexturesVertex
 from pytorch3d.structures import Meshes
@@ -12,13 +13,14 @@ from sugar_utils.spherical_harmonics import (
 )
 from sugar_utils.graphics_utils import *
 from sugar_utils.general_utils import inverse_sigmoid
-from sugar_scene.gs_model import GaussianSplattingWrapper
+from sugar_scene.gs_model import GaussianSplattingWrapper, GaussianModel
 from sugar_scene.cameras import CamerasWrapper
 
 
 scale_activation = torch.exp
 scale_inverse_activation = torch.log
-        
+use_old_method = False
+
 
 def _initialize_radiuses_gauss_rasterizer(sugar):
     """Function to initialize the  of a SuGaR model.
@@ -106,6 +108,10 @@ class SuGaR(nn.Module):
         learn_surface_mesh_opacity=True,
         learn_surface_mesh_scales=True,
         n_gaussians_per_surface_triangle=6,  # 1, 3, 4 or 6
+        editable=False,  # If True, allows for automatically rescaling Gaussians in real time if triangles are deformed from their original shape. 
+        # We wrote about this functionality in the paper, and it was previously part of sugar_compositor.py, which we haven't finished cleaning yet for this repo.
+        # We now moved it to this script as it is more related to the SuGaR model than to the compositor.
+        device=None,
         *args, **kwargs) -> None:
         """
         Args:
@@ -135,6 +141,16 @@ class SuGaR(nn.Module):
         self.nerfmodel = nerfmodel
         self.freeze_gaussians = freeze_gaussians
         
+        if device is None:
+            if nerfmodel is None:
+                raise ValueError("You must provide a device if nerfmodel is None.")
+            else:
+                device = nerfmodel.device
+        self._device = device
+        
+        if nerfmodel is None:
+            training_cameras = None
+        
         self.learn_positions = ((not learn_color_only) and learnable_positions) and (not freeze_gaussians)
         self.learn_opacities = (not learn_color_only) and (not freeze_gaussians)
         self.learn_scales = (not learn_color_only) and (not freeze_gaussians)
@@ -147,6 +163,7 @@ class SuGaR(nn.Module):
             self.learn_surface_mesh_opacity = learn_surface_mesh_opacity
             self.learn_surface_mesh_scales = learn_surface_mesh_scales
             self.n_gaussians_per_surface_triangle = n_gaussians_per_surface_triangle
+            self.editable = editable
             
             self.learn_positions = self.learn_surface_mesh_positions
             self.learn_scales = self.learn_surface_mesh_scales
@@ -154,13 +171,16 @@ class SuGaR(nn.Module):
             self.learn_opacities = self.learn_surface_mesh_opacity
             
             self._surface_mesh_faces = torch.nn.Parameter(
-                torch.tensor(np.array(surface_mesh_to_bind.triangles)).to(nerfmodel.device), 
-                requires_grad=False).to(nerfmodel.device)
+                torch.tensor(np.array(surface_mesh_to_bind.triangles)).to(device), 
+                requires_grad=False).to(device)
             if surface_mesh_thickness is None:
-                surface_mesh_thickness = nerfmodel.training_cameras.get_spatial_extent() / 1_000_000
+                if nerfmodel:
+                    surface_mesh_thickness = nerfmodel.training_cameras.get_spatial_extent() / 1_000_000
+                else:
+                    surface_mesh_thickness = 1e-6
             self.surface_mesh_thickness = torch.nn.Parameter(
-                torch.tensor(surface_mesh_thickness).to(nerfmodel.device), 
-                requires_grad=False).to(nerfmodel.device)
+                torch.tensor(surface_mesh_thickness).to(device), 
+                requires_grad=False).to(device)
             
             print("Binding radiance cloud to surface mesh...")
             if n_gaussians_per_surface_triangle == 1:
@@ -168,7 +188,7 @@ class SuGaR(nn.Module):
                 self.surface_triangle_bary_coords = torch.tensor(
                     [[1/3, 1/3, 1/3]],
                     dtype=torch.float32,
-                    device=nerfmodel.device,
+                    device=device,
                 )[..., None]
             
             if n_gaussians_per_surface_triangle == 3:
@@ -178,7 +198,7 @@ class SuGaR(nn.Module):
                     [1/4, 1/2, 1/4],
                     [1/4, 1/4, 1/2]],
                     dtype=torch.float32,
-                    device=nerfmodel.device,
+                    device=device,
                 )[..., None]
             
             if n_gaussians_per_surface_triangle == 4:
@@ -189,7 +209,7 @@ class SuGaR(nn.Module):
                     [1/6, 2/3, 1/6],
                     [1/6, 1/6, 2/3]],
                     dtype=torch.float32,
-                    device=nerfmodel.device,
+                    device=device,
                 )[..., None]  # n_gaussians_per_face, 3, 1
                 
             if n_gaussians_per_surface_triangle == 6:
@@ -202,24 +222,24 @@ class SuGaR(nn.Module):
                     [5/12, 1/6, 5/12],
                     [5/12, 5/12, 1/6]],
                     dtype=torch.float32,
-                    device=nerfmodel.device,
+                    device=device,
                 )[..., None]
                 
-            points = torch.tensor(np.array(surface_mesh_to_bind.vertices)).float().to(nerfmodel.device)
+            points = torch.tensor(np.array(surface_mesh_to_bind.vertices)).float().to(device)
             # verts_normals = torch.tensor(np.array(surface_mesh_to_bind.vertex_normals)).float().to(nerfmodel.device)
-            self._vertex_colors = torch.tensor(np.array(surface_mesh_to_bind.vertex_colors)).float().to(nerfmodel.device)
+            self._vertex_colors = torch.tensor(np.array(surface_mesh_to_bind.vertex_colors)).float().to(device)
             faces_colors = self._vertex_colors[self._surface_mesh_faces]  # n_faces, 3, n_coords
             colors = faces_colors[:, None] * self.surface_triangle_bary_coords[None]  # n_faces, n_gaussians_per_face, 3, n_colors
             colors = colors.sum(dim=-2)  # n_faces, n_gaussians_per_face, n_colors
             colors = colors.reshape(-1, 3)  # n_faces * n_gaussians_per_face, n_colors
                 
-            self._points = nn.Parameter(points, requires_grad=self.learn_positions).to(nerfmodel.device)
+            self._points = nn.Parameter(points, requires_grad=self.learn_positions).to(device)
             n_points = len(np.array(surface_mesh_to_bind.triangles)) * n_gaussians_per_surface_triangle
             self._n_points = n_points
             
         else:
             self.binded_to_surface_mesh = False
-            self._points = nn.Parameter(points, requires_grad=self.learn_positions).to(nerfmodel.device)
+            self._points = nn.Parameter(points, requires_grad=self.learn_positions).to(device)
             n_points = len(self._points)
         
         # KNN information for training regularization
@@ -236,21 +256,21 @@ class SuGaR(nn.Module):
         self._diamond_verts = torch.Tensor(
                 [[0., -1., 0.], [0., 0, 1.], 
                 [0., 1., 0.], [0., 0., -1.]]
-                ).to(nerfmodel.device)
+                ).to(device)
         self._square_verts = torch.Tensor(
                 [[0., -1., 1.], [0., 1., 1.], 
                 [0., 1., -1.], [0., -1., -1.]]
-                ).to(nerfmodel.device)
+                ).to(device)
         if primitive_types == 'diamond':
             self.primitive_verts = self._diamond_verts  # Shape (n_vertices_per_gaussian, 3)
         elif primitive_types == 'square':
             self.primitive_verts = self._square_verts  # Shape (n_vertices_per_gaussian, 3)
         self.primitive_triangles = torch.Tensor(
             [[0, 2, 1], [0, 3, 2]]
-            ).to(nerfmodel.device).long()  # Shape (n_triangles_per_gaussian, 3)
+            ).to(device).long()  # Shape (n_triangles_per_gaussian, 3)
         self.primitive_border_edges = torch.Tensor(
             [[0, 1], [1, 2], [2, 3], [3, 0]]
-            ).to(nerfmodel.device).long()  # Shape (n_edges_per_gaussian, 2)
+            ).to(device).long()  # Shape (n_edges_per_gaussian, 2)
         self.n_vertices_per_gaussian = len(self.primitive_verts)
         self.n_triangles_per_gaussian = len(self.primitive_triangles)
         self.n_border_edges_per_gaussian = len(self.primitive_border_edges)
@@ -261,13 +281,20 @@ class SuGaR(nn.Module):
         self.verts_uv, self.faces_uv = None, None
         
         # Render parameters
-        self.image_height = int(nerfmodel.training_cameras.height[0].item())
-        self.image_width = int(nerfmodel.training_cameras.width[0].item())
-        self.focal_factor = max(nerfmodel.training_cameras.p3d_cameras.K[0, 0, 0].item(),
-                                nerfmodel.training_cameras.p3d_cameras.K[0, 1, 1].item())
-        
-        self.fx = nerfmodel.training_cameras.fx[0].item()
-        self.fy = nerfmodel.training_cameras.fy[0].item()
+        if nerfmodel:
+            self.image_height = int(nerfmodel.training_cameras.height[0].item())
+            self.image_width = int(nerfmodel.training_cameras.width[0].item())
+            self.focal_factor = max(nerfmodel.training_cameras.p3d_cameras.K[0, 0, 0].item(),
+                                    nerfmodel.training_cameras.p3d_cameras.K[0, 1, 1].item())
+            
+            self.fx = nerfmodel.training_cameras.fx[0].item()
+            self.fy = nerfmodel.training_cameras.fy[0].item()
+        else:
+            self.image_height = 1080
+            self.image_width = 1920
+            self.focal_factor = 1.
+            self.fx = 1.
+            self.fy = 1.
         self.fov_x = focal2fov(self.fx, self.image_width)
         self.fov_y = focal2fov(self.fy, self.image_height)
         self.tanfovx = math.tan(self.fov_x * 0.5)
@@ -279,7 +306,7 @@ class SuGaR(nn.Module):
         else:
             all_densities = inverse_sigmoid(0.1 * torch.ones((n_points, 1), dtype=torch.float, device=points.device))
         self.all_densities = nn.Parameter(all_densities, 
-                                     requires_grad=self.learn_opacities).to(nerfmodel.device)
+                                     requires_grad=self.learn_opacities).to(device)
         self.return_one_densities = False
         
         self.min_ndc_radius = 2. / min(self.image_height, self.image_width)
@@ -299,17 +326,17 @@ class SuGaR(nn.Module):
                 print("Initialized radiuses for 3D Gauss Rasterizer")
                 
             else:
-                radiuses = torch.rand(1, n_points, self.radius_dim, device=nerfmodel.device)
+                radiuses = torch.rand(1, n_points, self.radius_dim, device=device)
                 self.min_radius = self.min_ndc_radius / self.focal_factor * 0.005 # 0.005
                 self.max_radius = self.max_ndc_radius / self.focal_factor * 2. # 2.
                 
             # 3D Gaussian parameters
             self._scales = nn.Parameter(
                 radiuses[0, ..., 4:],
-                requires_grad=self.learn_scales).to(nerfmodel.device)
+                requires_grad=self.learn_scales).to(device)
             self._quaternions = nn.Parameter(
                 radiuses[0, ..., :4],
-                requires_grad=self.learn_quaternions).to(nerfmodel.device)
+                requires_grad=self.learn_quaternions).to(device)
         
         else:                        
             self.scale_activation = scale_activation
@@ -323,27 +350,36 @@ class SuGaR(nn.Module):
             scales = scales.clamp_min(0.0000001).reshape(len(faces_verts), -1, 1).expand(-1, self.n_gaussians_per_surface_triangle, 2).clone().reshape(-1, 2)
             self._scales = nn.Parameter(
                 scale_inverse_activation(scales),
-                requires_grad=self.learn_surface_mesh_scales).to(nerfmodel.device)
+                requires_grad=self.learn_surface_mesh_scales).to(device)
             
             # We actually don't learn quaternions here, but complex numbers to encode a 2D rotation in the triangle's plane
-            complex_numbers = torch.zeros(self._n_points, 2).to(nerfmodel.device)
+            complex_numbers = torch.zeros(self._n_points, 2).to(device)
             complex_numbers[:, 0] = 1.
             self._quaternions = nn.Parameter(
                 complex_numbers,
-                requires_grad=self.learn_surface_mesh_scales).to(nerfmodel.device)
+                requires_grad=self.learn_surface_mesh_scales).to(device)
+            
+            # Reference scaling factor
+            if self.editable:
+                if use_old_method:
+                    self.reference_scaling_factor = (faces_verts - faces_verts.mean(dim=1, keepdim=True)).norm(dim=-1).mean(dim=-1, keepdim=True)
+                else:
+                    self._reference_points = self._points.clone().detach()
+                    self._reference_normals = self.surface_mesh.faces_normals_list()[0].clone()
+                    self.edited_cache = None
         
         # Initialize color features
         self.sh_levels = sh_levels
         sh_coordinates_dc = RGB2SH(colors).unsqueeze(dim=1)
         self._sh_coordinates_dc = nn.Parameter(
-            sh_coordinates_dc.to(self.nerfmodel.device),
+            sh_coordinates_dc.to(device),
             requires_grad=True and (not freeze_gaussians)
-        ).to(self.nerfmodel.device)
+        ).to(device)
         
         self._sh_coordinates_rest = nn.Parameter(
-            torch.zeros(n_points, sh_levels**2 - 1, 3).to(self.nerfmodel.device),
+            torch.zeros(n_points, sh_levels**2 - 1, 3).to(device),
             requires_grad=True and (not freeze_gaussians)
-        ).to(self.nerfmodel.device)
+        ).to(device)
             
         # Beta mode
         self.beta_mode = beta_mode
@@ -351,12 +387,15 @@ class SuGaR(nn.Module):
             with torch.no_grad():
                 log_beta = self.scale_activation(self._scales).mean().log().view(1,)
             self._log_beta = torch.nn.Parameter(
-                log_beta.to(self.nerfmodel.device),
-                ).to(self.nerfmodel.device)
+                log_beta.to(self.device),
+                ).to(self.device)
     
     @property
     def device(self):
-        return self.nerfmodel.device
+        if self.nerfmodel:
+            return self.nerfmodel.device
+        else:
+            return self._device
     
     @property
     def n_points(self):
@@ -402,9 +441,27 @@ class SuGaR(nn.Module):
         if not self.binded_to_surface_mesh:
             scales = self.scale_activation(self._scales)
         else:
+            plane_scales = self.scale_activation(self._scales)
+            if self.editable:
+                if use_old_method:
+                    # Old method described in the original SuGaR paper
+                    faces_verts = self._points[self._surface_mesh_faces]
+                    faces_centers = faces_verts.mean(dim=1, keepdim=True)
+                    scaling_factor = (faces_verts - faces_centers).norm(dim=-1).mean(dim=-1, keepdim=True) / self.reference_scaling_factor
+                    plane_scales = plane_scales * scaling_factor[:, None].expand(-1, self.n_gaussians_per_surface_triangle, -1).reshape(-1, 1)
+                else:
+                    # New method with better scaling
+                    if (self.edited_cache is not None) and self.edited_cache.shape[-1]==3:
+                        scales = self.edited_cache
+                        self.edited_cache = None
+                    else:
+                        quaternions, scales = self.get_edited_quaternions_and_scales()
+                        self.edited_cache = quaternions
+                    return scales
+
             scales = torch.cat([
                 self.surface_mesh_thickness * torch.ones(len(self._scales), 1, device=self.device), 
-                self.scale_activation(self._scales)
+                plane_scales,
                 ], dim=-1)
         return scales
     
@@ -413,27 +470,35 @@ class SuGaR(nn.Module):
         if not self.binded_to_surface_mesh:
             quaternions = self._quaternions
         else:
-            # We compute quaternions to enforce face normals to be the first axis of gaussians
-            R_0 = torch.nn.functional.normalize(self.surface_mesh.faces_normals_list()[0], dim=-1)
+            if (not self.editable) or (use_old_method):                
+                # We compute quaternions to enforce face normals to be the first axis of gaussians
+                R_0 = torch.nn.functional.normalize(self.surface_mesh.faces_normals_list()[0], dim=-1)
 
-            # We use the first side of every triangle as the second base axis
-            faces_verts = self._points[self._surface_mesh_faces]
-            base_R_1 = torch.nn.functional.normalize(faces_verts[:, 0] - faces_verts[:, 1], dim=-1)
+                # We use the first side of every triangle as the second base axis
+                faces_verts = self._points[self._surface_mesh_faces]
+                base_R_1 = torch.nn.functional.normalize(faces_verts[:, 0] - faces_verts[:, 1], dim=-1)
 
-            # We use the cross product for the last base axis
-            base_R_2 = torch.nn.functional.normalize(torch.cross(R_0, base_R_1, dim=-1))
-            
-            # We now apply the learned 2D rotation to the base quaternion
-            complex_numbers = torch.nn.functional.normalize(self._quaternions, dim=-1).view(len(self._surface_mesh_faces), self.n_gaussians_per_surface_triangle, 2)
-            R_1 = complex_numbers[..., 0:1] * base_R_1[:, None] + complex_numbers[..., 1:2] * base_R_2[:, None]
-            R_2 = -complex_numbers[..., 1:2] * base_R_1[:, None] + complex_numbers[..., 0:1] * base_R_2[:, None]
+                # We use the cross product for the last base axis
+                base_R_2 = torch.nn.functional.normalize(torch.cross(R_0, base_R_1, dim=-1))
+                
+                # We now apply the learned 2D rotation to the base quaternion
+                complex_numbers = torch.nn.functional.normalize(self._quaternions, dim=-1).view(len(self._surface_mesh_faces), self.n_gaussians_per_surface_triangle, 2)
+                R_1 = complex_numbers[..., 0:1] * base_R_1[:, None] + complex_numbers[..., 1:2] * base_R_2[:, None]
+                R_2 = -complex_numbers[..., 1:2] * base_R_1[:, None] + complex_numbers[..., 0:1] * base_R_2[:, None]
 
-            # We concatenate the three vectors to get the rotation matrix
-            R = torch.cat([R_0[:, None, ..., None].expand(-1, self.n_gaussians_per_surface_triangle, -1, -1).clone(),
-                        R_1[..., None],
-                        R_2[..., None]],
-                        dim=-1).view(-1, 3, 3)
-            quaternions = matrix_to_quaternion(R)
+                # We concatenate the three vectors to get the rotation matrix
+                R = torch.cat([R_0[:, None, ..., None].expand(-1, self.n_gaussians_per_surface_triangle, -1, -1).clone(),
+                            R_1[..., None],
+                            R_2[..., None]],
+                            dim=-1).view(-1, 3, 3)
+                quaternions = matrix_to_quaternion(R)
+            else:
+                if (self.edited_cache is not None) and self.edited_cache.shape[-1]==4:
+                    quaternions = self.edited_cache
+                    self.edited_cache = None
+                else:
+                    quaternions, scales = self.get_edited_quaternions_and_scales()
+                    self.edited_cache = scales
             
         return torch.nn.functional.normalize(quaternions, dim=-1)
     
@@ -518,9 +583,117 @@ class SuGaR(nn.Module):
             )
         return surface_mesh
     
+    def make_editable(self):
+        if self.binded_to_surface_mesh and (not self.editable):
+            self.editable = True            
+            if use_old_method:
+                faces_verts = self._points[self._surface_mesh_faces]  # n_faces, 3, n_coords
+                self._reference_points = self._points.clone().detach()
+                self.reference_scaling_factor = (faces_verts - faces_verts.mean(dim=1, keepdim=True)).norm(dim=-1).mean(dim=-1, keepdim=True)
+            else:
+                self._reference_points = self._points.clone().detach()
+                self._reference_normals = self.surface_mesh.faces_normals_list()[0].clone()
+                self.edited_cache = None
+            
+    def get_edited_quaternions_and_scales(self, verbose=False):
+        if not self.editable:
+            raise ValueError("The model is not editable. Call make_editable() first.")
+        
+        reference_verts = self._reference_points[self._surface_mesh_faces]
+        reference_normals = self._reference_normals
+        faces_verts = self._points[self._surface_mesh_faces]
+        bary_coords = self.surface_triangle_bary_coords#[None]
+        faces_normals = self.surface_mesh.faces_normals_list()[0]
+        
+        # Then compute the points using barycenter coordinates in the surface triangles
+        points = faces_verts[:, None] * bary_coords[None]  # n_faces, n_gaussians_per_face, 3, n_coords
+        points = points.sum(dim=-2)  # n_faces, n_gaussians_per_face, n_coords
+        
+        # Compute initial rotation matrices of faces
+        R_0 = torch.nn.functional.normalize(faces_normals, dim=-1)
+        base_R_1 = torch.nn.functional.normalize(faces_verts[:, 0] - faces_verts[:, 1], dim=-1)
+        base_R_2 = torch.nn.functional.normalize(torch.cross(R_0, base_R_1, dim=-1))
+        
+        # =====Adjust rotation to the current deformation=====
+        reference_base = torch.nn.functional.normalize(reference_verts[:, 0:1] - reference_verts[:, 1:2], dim=-1)  # n_faces, 1, 3
+        reference_axis = torch.nn.functional.normalize(reference_verts - reference_verts.mean(dim=-2, keepdim=True), dim=-1)  # n_faces, 3, 3
+        reference_axis[:, 2] = -reference_axis[:, 2]
+        
+        faces_base = torch.nn.functional.normalize(faces_verts[:, 0:1] - faces_verts[:, 1:2], dim=-1)  # n_faces, 1, 3
+        faces_axis = torch.nn.functional.normalize(faces_verts - faces_verts.mean(dim=-2, keepdim=True), dim=-1)  # n_faces, 3, 3
+        faces_axis[:, 2] = -faces_axis[:, 2]
+        
+        # Compute angle between the reference and the current sides
+        reference_angles = torch.arccos((reference_axis * reference_base).sum(dim=-1, keepdim=True).clamp(min=-1., max=1.))  # n_faces, 3, 1
+        faces_angles = torch.arccos((faces_axis * faces_base).sum(dim=-1, keepdim=True).clamp(min=-1., max=1.))  # n_faces, 3, 1
+        angles = faces_angles - reference_angles  # n_faces, 3, 1
+        point_angles = (angles[:, None] * bary_coords[None]).sum(dim=-2)  # n_faces, n_gaussians_per_face, 1
+
+        # Compute the complex number that will adjust the rotation the gaussians
+        point_adjust_complex = torch.cat([torch.cos(point_angles), torch.sin(point_angles)], dim=-1)
+        
+        # We compute the complex number representing the learned 2D rotation
+        complex_numbers = torch.nn.functional.normalize(self._quaternions, dim=-1).view(len(self._surface_mesh_faces), self.n_gaussians_per_surface_triangle, 2)
+        
+        # We apply the adjustment to the complex numbers
+        x, y = complex_numbers[..., 0].clone(), complex_numbers[..., 1].clone()
+        a, b = point_adjust_complex[..., 0], point_adjust_complex[..., 1]
+        complex_numbers[..., 0] = x * a - y * b
+        complex_numbers[..., 1] = x * b + y * a
+        
+        # We now apply the 2D rotation to the base quaternion
+        R_1 = complex_numbers[..., 0:1] * base_R_1[:, None] + complex_numbers[..., 1:2] * base_R_2[:, None]  # n_faces, n_gaussians_per_face, 3
+        R_2 = -complex_numbers[..., 1:2] * base_R_1[:, None] + complex_numbers[..., 0:1] * base_R_2[:, None]  # n_faces, n_gaussians_per_face, 3
+
+        # We concatenate the three vectors to get the rotation matrix, and compute the final quaternion
+        R = torch.cat([
+            R_0[:, None, ..., None].expand(-1, self.n_gaussians_per_surface_triangle, -1, -1).clone(),
+            R_1[..., None],
+            R_2[..., None]
+            ],
+            dim=-1)
+        quaternions = matrix_to_quaternion(R).view(-1, 4)
+        
+        # =====Adjust scales to the current deformation=====
+        all_faces_axis = faces_verts.mean(dim=-2, keepdim=True) - faces_verts  # Shape (n_faces, 3, 3)
+        all_faces_axis_norm = torch.norm(all_faces_axis, dim=-1, keepdim=True)  # Shape (n_faces, 3, 1)
+        all_faces_axis = torch_normalize(all_faces_axis, dim=-1)  # Shape (n_faces, 3, 3)
+        all_faces_orthos = torch.cross(all_faces_axis, faces_normals[:, None], dim=-1)  # Shape (n_faces, 3, 3)
+        
+        all_reference_axis = reference_verts.mean(dim=-2, keepdim=True) - reference_verts  # Shape (n_faces, 3, 3)
+        all_reference_axis_norm = torch.norm(all_reference_axis, dim=-1, keepdim=True)  # Shape (n_faces, 3, 1)
+        all_reference_axis = torch_normalize(all_reference_axis, dim=-1)  # Shape (n_faces, 3, 3)
+        
+        axis_proj_1 = (R_1[..., None, :] * all_faces_axis[:, None]).sum(dim=-1, keepdim=True)  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        ortho_proj_1 = (R_1[..., None, :] * all_faces_orthos[:, None]).sum(dim=-1, keepdim=True)  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        side_proj_2 = (R_2[..., None, :] * all_faces_axis[:, None]).sum(dim=-1, keepdim=True)  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        ortho_proj_2 = (R_2[..., None, :] * all_faces_orthos[:, None]).sum(dim=-1, keepdim=True)  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        
+        scaling_1 = torch.sqrt(  (axis_proj_1 * all_faces_axis_norm[:, None] / all_reference_axis_norm[:, None])**2 + ortho_proj_1**2  )  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        scaling_2 = torch.sqrt(  (side_proj_2 * all_faces_axis_norm[:, None] / all_reference_axis_norm[:, None])**2 + ortho_proj_2**2  )  # Shape (n_faces, n_gaussians_per_face, 3, 1)
+        
+        scaling_1 = (scaling_1 * bary_coords[None]).sum(dim=-2)  # Shape (n_faces, n_gaussians_per_face, 1)
+        scaling_2 = (scaling_2 * bary_coords[None]).sum(dim=-2)  # Shape (n_faces, n_gaussians_per_face, 1)
+        
+        plane_scales = self.scale_activation(self._scales).view(-1, self.n_gaussians_per_surface_triangle, 2)
+        plane_scales[..., 0:1] = plane_scales[..., 0:1] * scaling_1
+        plane_scales[..., 1:2] = plane_scales[..., 1:2] * scaling_2
+        scales = torch.cat([
+            self.surface_mesh_thickness * torch.ones(len(self._scales), 1, device=self.device), 
+            plane_scales.view(-1, 2),
+            ], dim=-1)
+        
+        if verbose:
+            with torch.no_grad():
+                print("Computed edited quaternions and scales.")
+                print("Mean - std - min - max - median")
+                print("Scaling1:", scaling_1.mean().item(), scaling_1.std().item(), scaling_1.min().item(), scaling_1.max().item(), scaling_1.median().item())
+                print("Scaling2:", scaling_2.mean().item(), scaling_2.std().item(), scaling_2.min().item(), scaling_2.max().item(), scaling_2.median().item())
+        return quaternions, scales
+    
     def unbind_surface_mesh(self):
-        self._quaternions = nn.Parameter(self.quaternions.detach(), requires_grad=self.learn_quaternions).to(self.nerfmodel.device)
-        self._scales = nn.Parameter(scale_inverse_activation(self.scaling.detach()), requires_grad=self.learn_scales).to(self.nerfmodel.device)
+        self._quaternions = nn.Parameter(self.quaternions.detach(), requires_grad=self.learn_quaternions).to(self.device)
+        self._scales = nn.Parameter(scale_inverse_activation(self.scaling.detach()), requires_grad=self.learn_scales).to(self.device)
         self.scale_activation = scale_activation
         self.scale_inverse_activation = scale_inverse_activation
         self.binded_to_surface_mesh = False
@@ -618,7 +791,10 @@ class SuGaR(nn.Module):
         
     def get_texture_img(self, nerf_cameras, cam_idx, sh_levels:int=None,):
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
         if sh_levels is None:
             sh_levels = self.sh_levels
         
@@ -676,10 +852,13 @@ class SuGaR(nn.Module):
         
     def get_cameras_spatial_extent(self, nerf_cameras:CamerasWrapper=None, return_average_xyz=False):
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
         
         camera_centers = nerf_cameras.p3d_cameras.get_camera_center()
-        avg_camera_center = camera_centers.mean(dim=0, keepdim=True)
+        avg_camera_center = camera_centers.mean(dim=0, keepdim=True)  # Should it be replaced by the center of camera bbox, i.e. (min + max) / 2?
         half_diagonal = torch.norm(camera_centers - avg_camera_center, dim=-1).max().item()
 
         radius = 1.1 * half_diagonal
@@ -765,7 +944,8 @@ class SuGaR(nn.Module):
             else:
                 areas = areas * self.strengths[mask].view(-1)
         areas = areas.abs()
-        cum_probs = areas.cumsum(dim=-1) / areas.sum(dim=-1, keepdim=True)
+        # cum_probs = areas.cumsum(dim=-1) / areas.sum(dim=-1, keepdim=True)
+        cum_probs = areas / areas.sum(dim=-1, keepdim=True)
         
         random_indices = torch.multinomial(cum_probs, num_samples=num_samples, replacement=True)
         if mask is not None:
@@ -1264,7 +1444,10 @@ class SuGaR(nn.Module):
         ):
         # Remember to reset neighbors and update texture features before calling this function
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
         
         if primitive_types is not None:
             self.primitive_types = primitive_types
@@ -1491,7 +1674,10 @@ class SuGaR(nn.Module):
         ):
         # Remember to reset neighbors and update texture features before calling this function
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
         
         if primitive_types is not None:
             self.primitive_types = primitive_types
@@ -1720,7 +1906,10 @@ class SuGaR(nn.Module):
         ):
         # Remember to reset neighbors and update texture features before calling this function
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
         
         if primitive_types is not None:
             self.primitive_types = primitive_types
@@ -1950,6 +2139,7 @@ class SuGaR(nn.Module):
         return_colors:bool=False,
         positions:torch.Tensor=None,
         point_colors = None,
+        point_opacities = None,
         ):
         """Render an image using the Gaussian Splatting Rasterizer.
 
@@ -1975,7 +2165,10 @@ class SuGaR(nn.Module):
         """
 
         if nerf_cameras is None:
-            nerf_cameras = self.nerfmodel.training_cameras
+            if self.nerfmodel:
+                nerf_cameras = self.nerfmodel.training_cameras
+            else:
+                raise ValueError("If no NerfModel is provided, you must provide a CamerasWrapper.")
 
         p3d_camera = nerf_cameras.p3d_cameras[camera_indices]
 
@@ -2055,8 +2248,11 @@ class SuGaR(nn.Module):
         else:
             splat_colors = point_colors
             shs = None
-            
-        splat_opacities = self.strengths.view(-1, 1)
+        
+        if point_opacities is None:
+            splat_opacities = self.strengths.view(-1, 1)
+        else:
+            splat_opacities = point_opacities
         
         if quaternions is None:
             quaternions = self.quaternions
@@ -2143,6 +2339,52 @@ class SuGaR(nn.Module):
                 outputs["colors"] = splat_colors
         
             return outputs
+        
+    def render_depth_and_normal(
+        self, 
+        nerf_cameras=None,
+        camera_indices=0,
+        bg_color=[0., 0., 0.],
+        ):
+        
+        if not isinstance(bg_color, torch.Tensor):
+            bg_color = torch.tensor(bg_color, device=self.device).float()
+        
+        if nerf_cameras is None:
+            nerf_cameras = self.nerfmodel.training_cameras
+        
+        p3d_camera = nerf_cameras.p3d_cameras[camera_indices]
+        camera_center = p3d_camera.get_camera_center()
+    
+        # Compute and flip normals to face the camera
+        world_normals = self.get_normals()
+        world_normals = world_normals * torch.sign((world_normals * (camera_center - self.points)).sum(dim=-1, keepdim=True))
+        
+        # Aggregate depth and normals x-y components        
+        dn_features = torch.cat([
+            p3d_camera.get_world_to_view_transform().transform_points(self.points)[..., 2:3],
+            p3d_camera.get_world_to_view_transform().transform_normals(world_normals)[..., 0:2],
+        ], dim=-1)
+        
+        # Render depth and normals x-y components
+        dn_img = self.render_image_gaussian_rasterizer(
+            sh_deg=0,
+            camera_indices=camera_indices,
+            point_colors=dn_features,
+            bg_color=bg_color,
+        )
+        
+        # Extract depth
+        depth_img = dn_img[..., 0]
+        
+        # Extract normals. We flip the x and y components to match the OpenGL convention,
+        # And we compute the z component from the x and y components
+        normal_img = torch.cat([
+            -dn_img[..., 1:], 
+            -torch.sqrt(1 - torch.sum(dn_img[..., 1:]**2, dim=-1, keepdim=True).clamp_max(1.0))
+        ], dim=-1)
+        
+        return depth_img, normal_img
 
     def save_model(self, path, **kwargs):
         checkpoint = {}
@@ -2152,8 +2394,12 @@ class SuGaR(nn.Module):
         torch.save(checkpoint, path)        
 
 
-def load_refined_model(refined_sugar_path, nerfmodel:GaussianSplattingWrapper):
-    checkpoint = torch.load(refined_sugar_path, map_location=nerfmodel.device)
+def load_refined_model(refined_sugar_path, nerfmodel:GaussianSplattingWrapper, device=None):
+    if device is None:
+        if nerfmodel is None:
+            raise ValueError("You must provide a device if nerfmodel is None.")
+        device = nerfmodel.device
+    checkpoint = torch.load(refined_sugar_path, map_location=device)
     n_faces = checkpoint['state_dict']['_surface_mesh_faces'].shape[0]
     n_gaussians = checkpoint['state_dict']['_scales'].shape[0]
     n_gaussians_per_surface_triangle = n_gaussians // n_faces
@@ -2169,18 +2415,21 @@ def load_refined_model(refined_sugar_path, nerfmodel:GaussianSplattingWrapper):
         o3d_mesh.triangles = o3d.utility.Vector3iVector(checkpoint['state_dict']['_surface_mesh_faces'].cpu().numpy())
         # o3d_mesh.vertex_normals = o3d.utility.Vector3dVector(normals.cpu().numpy())
         o3d_mesh.vertex_colors = o3d.utility.Vector3dVector(torch.ones_like(checkpoint['state_dict']['_points']).cpu().numpy())
-        
+
+    active_sh_degree = int(np.sqrt(checkpoint['state_dict']['_sh_coordinates_rest'].shape[1] + 1))
+
     refined_sugar = SuGaR(
         nerfmodel=nerfmodel,
         points=checkpoint['state_dict']['_points'],
         colors=SH2RGB(checkpoint['state_dict']['_sh_coordinates_dc'][:, 0, :]),
         initialize=False,
-        sh_levels=nerfmodel.gaussians.active_sh_degree+1,
+        sh_levels=active_sh_degree,
         keep_track_of_knn=False,
         knn_to_track=0,
         beta_mode='average',
         surface_mesh_to_bind=o3d_mesh,
         n_gaussians_per_surface_triangle=n_gaussians_per_surface_triangle,
+        device=device,
         )
     refined_sugar.load_state_dict(checkpoint['state_dict'])
     
@@ -2324,6 +2573,9 @@ def extract_texture_image_and_uv_from_gaussians(
     MeshRenderer,
     SoftPhongShader,
     )
+    if rc.nerfmodel is None:
+        raise ValueError("You must provide a NerfModel to use this function.")
+    
     from pytorch3d.renderer.blending import BlendParams
     
     if square_size < 3:
@@ -2526,3 +2778,62 @@ def extract_texture_image_and_uv_from_gaussians(
         texture_img = texture_img / texture_counter.clamp(min=1)        
     
     return verts_uv, faces_uv, texture_img
+
+
+def convert_refined_sugar_into_gaussians(
+    refined_sugar,
+    means=None,
+    quaternions=None,
+    scales=None,
+    opacities=None,
+    sh_coordinates_dc=None,
+    sh_coordinates_rest=None,
+    ):
+    new_gaussians = GaussianModel(refined_sugar.sh_levels - 1)
+    
+    with torch.no_grad():
+        # Means
+        if means is None:
+            xyz = refined_sugar.points.cpu().numpy()
+        else:
+            xyz = means.cpu().numpy()
+        
+        # Opacities
+        if opacities is None:
+            opacities = inverse_sigmoid(refined_sugar.strengths).cpu().numpy()
+        else:
+            opacities = inverse_sigmoid(opacities).cpu().numpy()
+            
+        # Quaternions
+        if quaternions is None:
+            rots = refined_sugar.quaternions.cpu().numpy()
+        else:
+            rots = quaternions.cpu().numpy()
+            
+        # Scales
+        if scales is None:
+            scales = scale_inverse_activation(refined_sugar.scaling).cpu().numpy()
+        else:
+            scales = scale_inverse_activation(scales).cpu().numpy()
+            
+        # SH coordinates
+        if sh_coordinates_dc is None:
+            features_dc = refined_sugar._sh_coordinates_dc.permute(0, 2, 1).cpu().numpy()
+        else:
+            features_dc = sh_coordinates_dc.cpu().numpy()
+            
+        if sh_coordinates_rest is None:
+            features_extra = refined_sugar._sh_coordinates_rest.permute(0, 2, 1).cpu().numpy()
+        else:
+            features_extra = sh_coordinates_rest.cpu().numpy()
+
+    new_gaussians._xyz = torch.nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
+    new_gaussians._features_dc = torch.nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+    new_gaussians._features_rest = torch.nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+    new_gaussians._opacity = torch.nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
+    new_gaussians._scaling = torch.nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
+    new_gaussians._rotation = torch.nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
+
+    new_gaussians.active_sh_degree = new_gaussians.max_sh_degree
+    
+    return new_gaussians

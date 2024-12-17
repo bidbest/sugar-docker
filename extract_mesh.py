@@ -21,6 +21,8 @@ if __name__ == "__main__":
                         help='Surface level to extract the mesh at. If None, will extract levels 0.1, 0.3 and 0.5')
     parser.add_argument('-d', '--decimation_target', type=int, default=None, 
                         help='Target number of vertices to decimate the mesh to. If None, will decimate to 200_000 and 1_000_000.')
+    parser.add_argument('--project_mesh_on_surface_points', type=str2bool, default=True, 
+                        help='If True, project the mesh on the surface points for better details.')
     
     parser.add_argument('-o', '--mesh_output_dir',
                         type=str, default=None, 
@@ -28,7 +30,7 @@ if __name__ == "__main__":
     
     parser.add_argument('-b', '--bboxmin', type=str, default=None, help='Min coordinates to use for foreground.')
     parser.add_argument('-B', '--bboxmax', type=str, default=None, help='Max coordinates to use for foreground.')
-    parser.add_argument('--center_bbox', type=str2bool, default=False, help='If True, center the bounding box. Default is False.')
+    parser.add_argument('--center_bbox', type=str2bool, default=True, help='If True, center the bounding box. Default is True.')
     
     parser.add_argument('--gpu', type=int, default=0, help='Index of GPU device to use.')
     

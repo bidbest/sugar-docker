@@ -4,7 +4,7 @@ from sugar_extractors.refined_mesh import extract_mesh_and_texture_from_refined_
 
 if __name__ == "__main__":
     # Parser
-    parser = argparse.ArgumentParser(description='Script to train a full macarons model in large 3D scenes.')
+    parser = argparse.ArgumentParser(description='Script to extract a mesh and texture from a refined SuGaR model.')
     parser.add_argument('-s', '--scene_path',
                         type=str, 
                         help='(Required) path to the scene data to use.')  # --OK

@@ -3,6 +3,11 @@
 # SuGaR: Surface-Aligned Gaussian Splatting for Efficient 3D Mesh Reconstruction and High-Quality Mesh Rendering
 
 <font size="4">
+CVPR 2024
+</font>
+<br>
+
+<font size="4">
 <a href="https://anttwo.github.io/" style="font-size:100%;">Antoine Guédon</a>&emsp;
 <a href="https://vincentlepetit.github.io/" style="font-size:100%;">Vincent Lepetit</a>&emsp;
 </font>
@@ -12,7 +17,7 @@
 LIGM, Ecole des Ponts, Univ Gustave Eiffel, CNRS
 </font>
 
-| <a href="https://anttwo.github.io/sugar/">Webpage</a> | <a href="https://arxiv.org/abs/2311.12775">arXiv</a> | <a href="https://www.youtube.com/watch?v=MAkFyWfiBQo">Presentation video</a> |
+| <a href="https://anttwo.github.io/sugar/">Webpage</a> | <a href="https://arxiv.org/abs/2311.12775">arXiv</a> | <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a> | <a href="https://www.youtube.com/watch?v=MAkFyWfiBQo">Presentation video</a> | <a href="https://www.youtube.com/watch?v=YbjE0wnw67I">Viewer video</a> |
 
 <img src="./media/examples/walk.gif" alt="walk.gif" width="350"/><img src="./media/examples/attack.gif" alt="attack.gif" width="350"/> <br>
 <b>Our method extracts meshes from 3D Gaussian Splatting reconstructions and builds hybrid representations <br>that enable easy composition and animation in Gaussian Splatting scenes by manipulating the mesh.</b>
@@ -51,8 +56,8 @@ Retrieving such an editable mesh for realistic rendering is done within minutes 
 @article{guedon2023sugar,
   title={SuGaR: Surface-Aligned Gaussian Splatting for Efficient 3D Mesh Reconstruction and High-Quality Mesh Rendering},
   author={Gu{\'e}don, Antoine and Lepetit, Vincent},
-  journal={arXiv preprint arXiv:2311.12775},
-  year={2023}
+  journal={CVPR},
+  year={2024}
 }
 ```
 
@@ -61,6 +66,8 @@ Retrieving such an editable mesh for realistic rendering is done within minutes 
 <details>
 <summary><span style="font-weight: bold;">Updates</span></summary>
 <ul>
+  <li><b>[09/18/2024]</b> Improved the quality of the extracted meshes with the new `dn_consistency` regularization method, and added compatibility with the new Blender add-on for composition and animation. </li>
+  <li><b>[01/09/2024]</b> Added a dedicated, real-time viewer to let users visualize and navigate in the reconstructed scenes (hybrid representation, textured mesh and wireframe mesh).</li>
   <li><b>[12/20/2023]</b> Added a short notebook showing how to render images with the hybrid representation using the Gaussian Splatting rasterizer.</li>
   <li><b>[12/18/2023]</b> Code release.</li>
 </ul>
@@ -69,6 +76,9 @@ Retrieving such an editable mesh for realistic rendering is done within minutes 
 <details>
 <summary><span style="font-weight: bold;">To-do list</span></summary>
 <ul>
+  <li><b>Viewer:</b> Add option to load the postprocessed mesh.</li>
+  <li><b>Mesh extraction:</b> Add the possibility to edit the extent of the background bounding box.</li>
+  <li><b>Tips&Tricks:</b> Add to the README.md file (and the webpage) some tips and tricks for using SuGaR on your own data and obtain better reconstructions (see the tips provided by user kitmallet).</li>
   <li><b>Improvement:</b> Add an <code>if</code> block to <code>sugar_extractors/coarse_mesh.py</code> to skip foreground mesh reconstruction and avoid triggering an error if no surface point is detected inside the foreground bounding box. This can be useful for users that want to reconstruct "<i>background scenes</i>". </li>
   <li><b>Using precomputed masks with SuGaR:</b> Add a mask functionality to the SuGaR optimization, to allow the user to mask out some pixels in the training images (like white backgrounds in synthetic datasets).
   </li>
@@ -87,26 +97,25 @@ Retrieving such an editable mesh for realistic rendering is done within minutes 
 
 ## Overview
 
-As we explain in the paper, SuGaR optimization starts with first optimizing a 3D Gaussian Splatting model for 7k iterations with no additional regularization term. 
-In this sense, SuGaR is a method that can be applied on top of any 3D Gaussian Splatting model, and a Gaussian Splatting model optimized for 7k iterations must be provided to SuGaR.
+As we explain in the paper, SuGaR optimization starts with first optimizing a 3D Gaussian Splatting model for 7k iterations with no additional regularization term. Consequently, the current implementation contains a version of the original <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting code</a>, and we built our model as a wrapper of a vanilla 3D Gaussian Splatting model.
+Please note that, even though this wrapper implementation is convenient for many reasons, it may not be the most optimal one for memory usage.
 
-Consequently, the current implementation contains a version of the original <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting code</a>, and we built our model as a wrapper of a vanilla 3D Gaussian Splatting model.
-Please note that, even though this wrapper implementation is convenient for many reasons, it may not be the most optimal one for memory usage, so we might change it in the future.
+The full SuGaR pipeline consists of 4 main steps, and an optional one:
+1. **Short vanilla 3DGS optimization**: optimizing a vanilla 3D Gaussian Splatting model for 7k iterations, in order to let Gaussians position themselves in the scene.
+2. **SuGaR optimization**: optimizing Gaussians alignment with the surface of the scene.
+3. **Mesh extraction**: extracting a mesh from the optimized Gaussians.
+4. **SuGaR refinement**: refining the Gaussians and the mesh together to build a hybrid Mesh+Gaussians representation.
+5. **Textured mesh extraction (Optional)**: extracting a traditional textured mesh from the refined SuGaR model as a tool for visualization, composition and animation in Blender using our <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a>.
 
-After optimizing a vanilla Gaussian Splatting model, the SuGaR pipeline consists of 3 main steps, and an optional one:
-1. **SuGaR optimization**: optimizing Gaussians alignment with the surface of the scene
-2. **Mesh extraction**: extracting a mesh from the optimized Gaussians
-3. **SuGaR refinement**: refining the Gaussians and the mesh together to build a hybrid representation
-4. **Textured mesh extraction (Optional)**: extracting a traditional textured mesh from the refined SuGaR model
+We provide a dedicated script for each of these steps, as well as a script `train_full_pipeline.py` that runs the entire pipeline. We explain how to use this script in the next sections. <br>
 
 <div align="center"><br>
-<img src="./media/examples/process_0.png" alt="process_0.png" width="750"/><br>
-<img src="./media/examples/process_1.png" alt="process_.png" width="750"/><br>
+<img src="./media/blender/blender_edit.png" alt="blender_edit.png" height="200"/>
+<img src="./media/examples/attack.gif" alt="attack.gif" height="200"/>
+<br><b>You can visualize, edit, combine or animate the reconstructed textured meshes in Blender <i>(left)</i> <br>and render the result with SuGaR <i>(right)</i> thanks to our <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a>.</b><br>
 </div><br>
 
-We provide a dedicated script for each of these steps, as well as a script `train.py` that runs the entire pipeline. We explain how to use this script in the next sections. <br>
-
-Please note that the final step, _Textured mesh extraction_, is optional but is enabled by default in the `train.py` script. Indeed, it is very convenient to have a traditional textured mesh for visualization, composition and animation using traditional softwares such as Blender. However, this step is not needed to produce, modify or animate hybrid representations.
+Please note that the final step, _Textured mesh extraction_, is optional but is enabled by default in the `train_full_pipeline.py` script. Indeed, it is very convenient to have a traditional textured mesh for visualization, composition and animation using traditional softwares such as <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender</a>. If you installed Nvdiffrast as described below, this step should only take a few seconds anyway.
 
 <div align="center">
 <b>Hybrid representation (Mesh + Gaussians on the surface)</b><br>
@@ -130,6 +139,9 @@ Below is another example of a scene showing a robot with a black and specular ma
 </div>
 
 ## Installation
+
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary>
 
 ### 0. Requirements
 
@@ -157,7 +169,25 @@ or
 git clone git@github.com:Anttwo/SuGaR.git --recursive
 ```
 
-### 2. Install the required Python packages
+### 2. Creating the Conda environment
+
+To create and activate the Conda environment with all the required packages, go inside the `SuGaR/` directory and run the following command:
+
+```shell
+python install.py
+conda activate sugar
+```
+
+This script will automatically create a Conda environment named `sugar` and install all the required packages. It will also automatically install the <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting</a> rasterizer as well as the <a href="https://nvlabs.github.io/nvdiffrast/">Nvdiffrast</a> library for faster mesh rasterization.
+
+If you encounter any issues with the installation, you can try to follow the detailed instructions below to install the required packages manually.
+
+<details>
+<summary><span style="font-weight: bold;">
+Detailed instructions for manual installation
+</span></summary>
+
+#### a) Install the required Python packages
 To install the required Python packages and activate the environment, go inside the `SuGaR/` directory and run the following commands:
 
 ```shell
@@ -165,10 +195,7 @@ conda env create -f environment.yml
 conda activate sugar
 ```
 
-<details>
-<summary><span style="font-weight: bold;">If this command fails to create a working environment</span></summary>
-
-Then you can try to install the required packages manually by running the following commands:
+If this command fails to create a working environment, you can try to install the required packages manually by running the following commands:
 ```shell
 conda create --name sugar -y python=3.9
 conda activate sugar
@@ -184,11 +211,10 @@ conda install -c conda-forge ipywidgets
 pip install open3d
 pip install --upgrade PyMCubes
 ```
-</details>
 
-### 3. Install the Gaussian Splatting rasterizer
+#### b) Install the Gaussian Splatting rasterizer
 
-Run the following commands inside the sugar directory to install the additional Python submodules required for Gaussian Splatting:
+Run the following commands inside the `SuGaR` directory to install the additional Python submodules required for Gaussian Splatting:
 
 ```shell
 cd gaussian_splatting/submodules/diff-gaussian-rasterization/
@@ -199,117 +225,200 @@ cd ../../../
 ```
 Please refer to the <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting repository</a> for more details.
 
+#### c) (Optional) Install Nvdiffrast for faster Mesh Rasterization
 
-## Quick Start
-
-Start by optimizing a vanilla Gaussian Splatting model for 7k iterations by running the script `gaussian_splatting/train.py`, as shown below. Please refer to the original <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting repository</a> for more details. This optimization should be very fast, and last only a few minutes.
-
-```shell
-python gaussian_splatting/train.py -s <path to COLMAP dataset> --iterations 7000 -m <path to the desired output directory>
-```
-
-Then, run the script `train.py` in the root directory to optimize a SuGaR model.
+Installing Nvdiffrast is optional but will greatly speed up the textured mesh extraction step, from a few minutes to less than 10 seconds.
 
 ```shell
-python train.py -s <path to COLMAP dataset> -c <path to the Gaussian Splatting checkpoint> -r <"density" or "sdf">
+git clone https://github.com/NVlabs/nvdiffrast
+cd nvdiffrast
+pip install .
+cd ../
 ```
 
-The most important arguments for the `train.py` script are the following:
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--scene_path` / `-s`   | `str` | Path to the source directory containing a COLMAP dataset.|
-| `--checkpoint_path` / `-c` | `str` | Path to the checkpoint directory of the vanilla 3D Gaussian Splatting model. |
-| `--regularization_type` / `-r` | `str` | Type of regularization to use for optimizing SuGaR. Can be `"density"` or `"sdf"`. For reconstructing detailed objects centered in the scene with 360° coverage, `"density"` provides a better foreground mesh. For a stronger regularization and a better balance between foreground and background, choose `"sdf"`. |
-| `--eval` | `bool` | If True, performs an evaluation split of the training images. Default is `True`. |
-| `--low_poly` | `bool` | If True, uses the standard config for a low poly mesh, with `200_000` vertices and `6` Gaussians per triangle. |
-| `--high_poly` | `bool` | If True, uses the standard config for a high poly mesh, with `1_000_000` vertices and `1` Gaussian per triangle. |
-| `--refinement_time` | `str` | Default configs for time to spend on refinement. Can be `"short"` (2k iterations), `"medium"` (7k iterations) or `"long"` (15k iterations). |
-| `--export_uv_textured_mesh` / `-t` | `bool` | If True, will optimize and export a traditional textured mesh as an `.obj` file from the refined SuGaR model, after refinement. Computing a traditional color UV texture should take less than 10 minutes. Default is `True`. |
-
-We provide more details about the two regularization methods `"density"` and `"sdf"` in the next section. For reconstructing detailed objects centered in the scene with 360° coverage, `"density"` provides a better foreground mesh. For a stronger regularization and a better balance between foreground and background, choose `"sdf"`. <br>
-The default configuration is `high_poly` with `refinement_time` set to `"long"`. Results are saved in the `output/` directory.<br>
-
-As we explain in the paper, this script extracts a mesh in 30~35 minutes on average on a single GPU. After mesh extraction, the refinement time only takes a few minutes when using `--refinement_time "short"`, but can take up to an hour when using `--refinement_time "long"`. A short refinement time is enough to produce a good-looking hybrid representation in most cases.
-
-Please note that the optimization time may vary (from 20 to 45 minutes) depending on the complexity of the scene and the GPU used. Moreover, the current implementation splits the optimization into 3 scripts that can be run separately (SuGaR optimization, mesh extraction, model refinement) so it reloads the data at each part, which is not optimal and takes several minutes. We will update the code in a near future to optimize this.
-
-Below is a detailed list of all the command line arguments for the `train.py` script.
-<details>
-<summary><span style="font-weight: bold;">All command line arguments for train.py</span></summary>
-
-#### Data and initial 3D Gaussian Splatting optimization
-
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--scene_path` / `-s`   | `str` | Path to the source directory containing a COLMAP data set.|
-| `--checkpoint_path` / `-c` | `str` | Path to the checkpoint directory of the vanilla 3D Gaussian Splatting model. |
-| `--iteration_to_load` / `-i` | `int` | Iteration to load from the 3DGS checkpoint directory. If not specified, loads the iteration `7000`. |
-| `--eval` | `bool` | If True, performs an evaluation split of the training images. Default is `True`. |
-
-#### SuGaR optimization
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--regularization_type` / `-r` | `str` | Type of regularization to use for optimizing SuGaR. Can be `"density"` or `"sdf"`. |
-| `--gpu` | `int` | Index of GPU device to use. Default is `0`. |
-
-#### Mesh extraction
-
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--surface_level` / `-l` |`int`| Surface level to extract the mesh at. Default is `0.3`. |
-| `--n_vertices_in_mesh` / `-v` | `int` | Number of vertices in the extracted mesh. Default is `1_000_000`. |
-| `--bboxmin` / `-b` | `str` | Min coordinates to use for foreground bounding box, formatted as a string `"(x,y,z)"`.|
-| `--bboxmax` / `-B` | `str` | Max coordinates to use for foreground bounding box, formatted as a string `"(x,y,z)"`. |
-| `--center_bbox` | `bool` | If True, centers the bbox. Default is True. |
-
-#### SuGaR and mesh refinement (Hybrid representation)
-
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--gaussians_per_triangle` / `-g` | `int` | Number of gaussians per triangle. Default is `1`. |
-| `--refinement_iterations` / `-f` | `int` | Number of refinement iterations. Default is `15_000`. |    
-
-#### (Optional) Parameters for traditional textured mesh extraction
-
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--export_uv_textured_mesh` / `-t` | `bool` | If True, will optimize and export a textured mesh as an .obj file from the refined SuGaR model. Computing a traditional colored UV texture should take less than 10 minutes. Default is `True`. |
-| `--square_size` | `int` | Size of the square to use for the UV texture. Default is `10`. |
-| `--postprocess_mesh` | `bool` | If True, postprocess the mesh by removing border triangles with low-density. This step takes a few minutes and is not needed in general, as it can also be risky. However, it increases the quality of the mesh in some cases, especially when very thin objects are visible only from one side in the images. Default is `False`. |
-| `--postprocess_density_threshold` | `float` | Threshold to use for postprocessing the mesh. Default is `0.1`. |
-| `--postprocess_iterations` | `int` | Number of iterations to use for postprocessing the mesh. Default is `5`. |
-
-#### (Optional) Default configurations
-
-| Parameter | Type | Description |
-| :-------: | :--: | :---------: |
-| `--low_poly` | `bool` | If True, uses standard config for a low poly mesh, with `200_000` vertices and `6` Gaussians per triangle. |
-| `--high_poly` | `bool` | If True, uses standard config for a high poly mesh, with `1_000_000` vertices and `1` Gaussians per triangle. |
-| `--refinement_time` | `str` | Default configs for time to spend on refinement. Can be `"short"` (2k iterations), `"medium"` (7k iterations) or `"long"` (15k iterations). |
+</details>
 
 </details>
 
 
+## Quick Start
+
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary>
+
+### Training from scratch
+
+You can run the following single script to optimize a full SuGaR model from scratch using a COLMAP dataset:
+
+```shell
+python train_full_pipeline.py -s <path to COLMAP dataset> -r <"dn_consistency", "density" or "sdf"> --high_poly True --export_obj True
+```
+
+You can choose the regularization method with the `-r` argument, which can be `"dn_consistency"`, `"density"` or `"sdf"`. We recommend using the newer `"dn_consistency"` regularization for best quality meshes, but the results presented in the paper were obtained with the `"density"` regularization for object-centered scenes and `"sdf"` for scenes with a challenging background, such as the Mip-NeRF 360 dataset.
+
+You can also replace the `--high_poly True` argument with `--low_poly True` to extract a mesh with 200k vertices instead of 1M, and 6 Gaussians per triangle instead of 1.
+
+Moreover, you can add `--refinement_time "short"`, `"medium"` or `"long"` to set the time spent on the refinement step. The default is `"long"` (15k iterations), but `"short"` (2k iterations) can be enough to produce a good-looking hybrid representation.
+
+Finally, you can choose to export a traditional textured mesh with the `--export_obj` argument. This step is optional but is enabled by default in the `train_full_pipeline.py` script, as the mesh is required for using the <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a> and editing, combining or animating scenes in Blender.
+
+Results are saved in the `output/` directory.
+
+<details>
+<summary><span style="font-weight: bold;">Please click here to see the most important arguments for the `train_full_pipeline.py` script.</span></summary>
+
+| Parameter | Type | Description |
+| :-------: | :--: | :---------: |
+| `--scene_path` / `-s`   | `str` | Path to the source directory containing a COLMAP dataset.|
+| `--gs_output_dir` | `str` | Path to the checkpoint directory of a vanilla 3D Gaussian Splatting model. If no path is provided, the script will start from scratch and first optimize a vanilla 3DGS model. |
+| `--regularization_type` / `-r` | `str` | Type of regularization to use for aligning Gaussians. Can be `"dn_consistency"`, `"density"` or `"sdf"`. We recommend using the newer `"dn_consistency"` regularization for best quality meshes. |
+| `--eval` | `bool` | If True, performs an evaluation split of the training images. Default is `True`. |
+| `--low_poly` | `bool` | If True, uses the standard config for a low poly mesh, with `200_000` vertices and `6` Gaussians per triangle. |
+| `--high_poly` | `bool` | If True, uses the standard config for a high poly mesh, with `1_000_000` vertices and `1` Gaussian per triangle. |
+| `--refinement_time` | `str` | Default configs for time to spend on refinement. Can be `"short"` (2k iterations), `"medium"` (7k iterations) or `"long"` (15k iterations). |
+| `--export_ply` | `bool` | If True, export a `.ply` file with the refined 3D Gaussians at the end of the training. This file can be large (+/- 500MB), but is needed for using 3DGS viewers. Default is `True`. |
+| `--export_obj` / `-t` | `bool` | If True, will optimize and export a traditional textured mesh as an `.obj` file from the refined SuGaR model, after refinement. Computing a traditional color UV texture should just take a few seconds with Nvdiffrast. Default is `True`. |
+| `--square_size` | `int` | Size of the square allocated to each pair of triangles in the UV texture. Increase for higher texture resolution. Please decrease if you encounter memory issues. Default is `8`. |
+|`--white_background` | `bool` | If True, the background of the images will be set to white. Default is `False`. |
+
+
+</details>
+<br>
+
+As we explain in the paper, this script extracts a mesh in 30 minutes on average on a single GPU. After mesh extraction, the refinement time only takes a few minutes when using `--refinement_time "short"`, but can be much longer when using `--refinement_time "long"`. A short refinement time is enough to produce a good-looking hybrid representation in most cases.
+
+Please note that the optimization time may vary depending on the complexity of the scene and the GPU used. Moreover, the current implementation splits the optimization into modular scripts that can be run separately so it reloads the data at each part, which is not optimal and takes several minutes.
+
+Please see the `train_full_pipeline.py` for more details on all the command line arguments.
+
+### Training from a vanilla Gaussian Splatting model
+
+If you have already trained a <a href="https://github.com/graphdeco-inria/gaussian-splatting">vanilla Gaussian Splatting model</a> for a scene (we recommend training it for 7k iterations), you can use the `--gs_output_dir` argument to provide the path to the output directory of the vanilla Gaussian Splatting model. This will skip the first part of the optimization and directly load the Gaussians from the vanilla model:
+
+```shell
+python train_full_pipeline.py -s <path to COLMAP dataset> -r <"dn_consistency", "density" or "sdf"> --high_poly True --export_obj True --gs_output_dir <path to the Gaussian Splatting output directory>
+```
+
+</details>
+
+
+## Visualize a SuGaR model in real-time
+
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary><br>
+
+After optimizing a SuGaR model, you can visualize the model in real-time using the 3D Gaussian Splatting viewer of your choice. <br>
+Indeed, after optimization, we automatically export a `.ply` file in the `./output/refined_ply/` directory, containing the refined 3D Gaussians of SuGaR's hybrid representation and compatible with any 3DGS viewer.
+For instance, you can use the viewer provided in the original implementation of <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting</a>, or the awesome <a href="https://github.com/playcanvas/supersplat">SuperSplat viewer</a>. <br>
+An online, <a href="https://playcanvas.com/supersplat/editor">in-browser version of SuperSplat</a> is also available.
+
+We also propose a dedicated real-time viewer that allows you to visualize not only the refined 3D Gaussians but also the textured mesh and the wireframe mesh. Please see the instructions below to install and use this viewer.
+
+<details>
+<summary><span style="font-weight: bold;">Please click here to see the instructions for installing and using our real-time viewer.</span></summary>
+
+Please find <a href="https://www.youtube.com/watch?v=YbjE0wnw67I">here</a> a short video illustrating how to use the viewer.
+
+### 1. Installation
+
+*The viewer is currently built for Linux and Mac OS. It is not compatible with Windows. For Windows users, we recommend to use WSL2 (Windows Subsystem for Linux), as it is very easy to install and use. Please refer to the <a href="https://docs.microsoft.com/en-us/windows/wsl/install-win10">official documentation</a> for more details.<br> We thank <a href="https://github.com/mkkellogg/GaussianSplats3D">Mark Kellogg for his awesome 3D Gaussian Splatting implementation for Three.js</a>, which we used for building this viewer.*
+
+Please start by installing the latest versions of Node.js (such as 21.x) and npm.
+A simple way to do this is to run the following commands (using aptitude):
+
+```shell
+curl -fsSL https://deb.nodesource.com/setup_21.x | sudo -E bash -
+sudo apt-get install -y nodejs
+sudo apt-get install aptitude
+sudo aptitude install -y npm
+```
+
+Then, go inside the `./sugar_viewer/` directory and run the following commands:
+
+```shell
+npm install
+cd ..
+```
+
+### 2. Usage
+
+First, make sure you have exported a `.ply` file and an `.obj` file using the `train.py` script. The `.ply` file contains the refined 3D Gaussians, and the `.obj` file contains the textured mesh. These files are exported by default when running the `train.py` script, so if you ran the code with default values for `--export_ply` and `--export_obj`, you should be good to go.
+
+The ply file should be located in `./output/refined_ply/<your scene name>/`. Then, just run the following command in the root directory to start the viewer:
+
+```shell
+python run_viewer.py -p <path to the .ply file>
+```
+Please make sure your `.ply` file is located in the right folder, and use a relative path starting with `./output/refined_ply`.
+This command will redirect you to a local URL. Click on the link to open the viewer in your browser. Click the icons on the top right to switch between the different representations (hybrid representation, textured mesh, wireframe mesh). Use the mouse to rotate the scene, and the mouse wheel to zoom in and out. 
+
+</details>
+
+<div align="center" >
+<img src="./media/examples/viewer_example.png" alt="viewer_example.png" width="800"/>
+</div><br>
+
+We also recommend using our <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a> to create animations and video clips of SuGaR representations. 
+More specifically, the add-on allows you to import SuGaR meshes and visualize, edit, combine or animate them in Blender.
+Finally, you can render the result using the 3DGS rasterizer, which provides high-quality and realistic rendering of SuGaR's hybrid representation.
+
+</details>
+
+
+## Rendering, composition and animation with Blender
+
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary><br>
+
+The `view_sugar_results.ipynb` notebook and the `metrics.py` script provides examples of how to load a refined SuGaR model for rendering a scene.
+
+We also provide a <a href="https://github.com/Anttwo/sugar_frosting_blender_addon/">Blender add-on</a> for editing, combining, and animating SuGaR meshes within Blender and render the result using SuGaR's hybrid representations. Meshes are located in the `./output/refined_mesh/` directory.
+
+Please refer to the Blender add-on repository for more details on how to use the add-on and create a rendering package for SuGaR.
+After preparing the rendering package with Blender, which should be a `.JSON` file located in the `./output/blender/package/` directory, you can render the scene using the `render_blender_scene.py` script:
+
+```shell
+python render_blender_scene.py -p <Path to the rendering package>
+```
+
+The rendered images will be saved in the `./output/blender/renders/` directory.<br>
+Feel free to adjust the arguments of the script to adjust the rendering quality if you observe artifacts in the images.
+Specifically, you can switch to `--adaptation_method simple` or reduce `deformation_threshold` to mitigate artifacts in the rendering.
+Please refer to the script for more details on the command line arguments.
+
+</details>
+
+
+## Evaluation
+
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary><br>
+
+To evaluate the quality of the reconstructions, we provide a script `metrics.py` that computes the PSNR, SSIM and LPIPS metrics on test images. Start by optimizing SuGaR models for the desired scenes and a regularization method (`"dn_consistency"`, `"density"` or `"sdf"`), then create a `.json` config file containing the paths to the scenes in the following format: `{source_images_dir_path: vanilla_gaussian_splatting_checkpoint_path}`.
+
+Finally, run the script as follows:
+
+```shell
+python metrics.py --scene_config <Path to the .json file> -r <"sdf" or "density"> 
+```
+
+Results are saved in a `.json` file in the `output/metrics/` directory. 
+Please refer to the script for more details on the command line arguments.
+
+</details>
+
 ## Tips for using SuGaR on your own data and obtain better reconstructions
 
-### 1. Capture images or videos that cover the entire surface of the scene
+<details>
+<summary><span style="font-weight: bold;">Click here to see content.</span></summary><br>
+
+<details>
+<summary><span style="font-weight: bold;">1. Capture images or videos that cover the entire surface of the scene</span></summary><br>
 
 Using a smartphone or a camera, capture images or a video that cover the entire surface of the 3D scene you want to reconstruct. The easiest way to do this is to move around the scene while recording a video. Try to move slowly and smoothly in order to avoid motion blur. For consistent reconstruction and easier camera pose estimation with COLMAP, maintaining a uniform focal length and a constant exposure time is also important. We recommend to disable auto-focus on your smartphone to ensure that the focal length remains constant.
 
 For better reconstructions, try to cover objects from several and different angles, especially for thin and detailed parts of the scene. 
 Indeed, SuGaR is able to reconstruct very thin and detailed objects, but some artifacts may appear if these thin objects are not covered enough and are visible only from one side in the training images.
-
-<details>
-<summary><span style="font-weight: bold;">Detailed explanation</span></summary>
-SuGaR applies Poisson reconstruction with 3D points sampled on the parts of the surface that are visible in the training images. This visibility constraint is important to prevent sampling points on the backside of the Gaussian level sets, located behind the surface of the scene, which would produce a lot of self-collisions and many unnecessary vertices in the mesh after applying Poisson reconstruction.
-However, this visibility constraint also means that SuGaR cannot reconstruct parts of the surface that are not visible in the training images. If thin objects are visible only from one side in the training images, the Poisson reconstruction will try to reconstruct a closed surface, and will extend the surface of the thin objects, which produces an inaccurate mesh.
-
-_TODO: Add images illustrating such artifacts._
-</details><br>
-
-However, such artifacts are not visible in the hybrid representation, because the gaussian texturing gives low-opacity to these artifacts during refinement. 
-
-We already have simple ideas that could help to avoid such artifacts, such as **(a)** identifying new camera poses that cover parts of the surface non-visible in the training images that are likely to be on the same level set as the visible parts, and **(b)** adding these camera poses to the set of cameras used for sampling the points when applying Poisson reconstruction. We will update the code in a near future to include this.
 
 To convert a video to images, you can install `ffmpeg` and run the following command:
 ```shell
@@ -317,7 +426,10 @@ ffmpeg -i <Path to the video file> -qscale:v 1 -qmin 1 -vf fps=<FPS> %04d.jpg
 ```
 where `<FPS>` is the desired sampling rate of the video images. An FPS value of 1 corresponds to sampling one image per second. We recommend to adjust the sampling rate to the length of the video, so that the number of sampled images is between 100 and 300.
 
-### 2. Estimate camera poses with COLMAP
+</details>
+
+<details>
+<summary><span style="font-weight: bold;">2. Estimate camera poses with COLMAP</span></summary><br>
 
 Please first install a recent version of COLMAP (ideally CUDA-powered) and make sure to put the images you want to use in a directory `<location>/input`. Then, run the script `gaussian_splatting/convert.py` from the original Gaussian splatting implementation to compute the camera poses from the images using COLMAP. Please refer to the original <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting repository</a> for more details.
 
@@ -334,19 +446,61 @@ python gaussian_splatting/convert.py -s <location> --skip_matching
 ```
 
 _Note: If the sub-models have common registered images, they could be merged into a single model as post-processing step using COLMAP; However, merging sub-models requires to run another global bundle adjustment after the merge, which can be time consuming._
+</details>
 
 
-### 3. Density or SDF? Choose a regularization method that fits your scene
+<details>
+<summary><span style="font-weight: bold;">3. DN-Consistency, Density or SDF? Choose a regularization method that fits your scene</span></summary><br>
 
-As we explain in the paper, we provide two separate regularization methods for SuGaR: a density regularization and an SDF regularization. The density regularization is the simplest one and works well with objects centered in the scene. The SDF provides a stronger regularization, especially in background regions. 
+**We recommend using the newer DN-Consistency regularization for best quality meshes**.
+
+However, the results presented in the paper were obtained with the Density regularization for object-centered scenes and the SDF regularization for scenes with a challenging background, such as the Mip-NeRF 360 dataset.
+
+As we explain in the paper, the density regularization is the simplest one and works well with objects centered in the scene. The SDF provides a stronger regularization, especially in background regions. 
 As a consequence, the SDF regularization produces higher metrics on standard datasets. 
-However, for reconstructing an object centered in the scene with images taken from all around the object, the simpler density regularization generally produces a better mesh.
+However, for reconstructing an object centered in the scene with images taken from all around the object, the simpler density regularization generally produces a better mesh than SDF.
 
-Therefore, we recommend the following when using the `train.py` script:
-- For reconstructing detailed objects centered in the scene with 360° coverage (such as the toys we reconstructed in our presentation video), start with the density regularization `-r 'density'`. However, this may result in more chaotic Gaussians in the background.
-- For reconstructing more challenging scenes or enforcing a stronger regularization in the background, use the SDF regularization `-r 'sdf'`.
+The DN-Consistency regularization is a new regularization method that (a) enforces the Gaussians to align with the surface of the scene with the density regularization, while also (b) enforcing the consistency between the gradient of the depth and the normal maps, all rendered using the 3D Gaussians. <br>
+As described in the paper, the normal of a Gaussian is defined as the shortest axis of the covariance matrix of the Gaussian. <br> 
+This regularization method provides the best quality meshes.
 
-### 4. (Optional) Adapt the scale and the bounding box of the scene
+</details>
+
+<details>
+<summary><span style="font-weight: bold;">4. I have holes in my mesh, what can I do?</span></summary><br>
+
+If you have holes in your mesh, this means the cleaning step of the Poisson mesh is too aggressive for your scene. You can reduce the treshold `vertices_density_quantile` used for cleaning by modifying line 43 of `sugar_extractors/coarse_mesh.py`. For example, you can change this line from
+```python
+  vertices_density_quantile = 0.1
+```
+to
+```python
+  vertices_density_quantile = 0.
+```
+
+</details>
+
+<details>
+<summary><span style="font-weight: bold;">5. I have messy ellipsoidal bumps on the surface of my mesh, what can I do?</span></summary><br>
+
+Depending on your scene, the default hyperparameters used for Poisson reconstruction may be too fine compared to the size of the Gaussians. Gaussian could then become visible on the mesh, which results in messy ellipsoidal bumps on the surface of the mesh.
+This could happen if the camera trajectory is very close to a simple foreground object, for example.<br>
+To fix this, you can reduce the depth of Poisson reconstruction `poisson_depth` by modifying line 42 of `sugar_extractors/coarse_mesh.py`. <br>
+For example, you can change line 42 from
+```python
+  poisson_depth = 10
+```
+to
+```python
+  poisson_depth = 7
+```
+You may also try `poisson_depth = 6`, or `poisson_depth = 8` if the result is not satisfying.
+
+</details>
+
+
+<details>
+<summary><span style="font-weight: bold;">6. (Optional) Adapt the scale and the bounding box of the scene</span></summary><br>
 
 As it is explained in the original <a href="https://github.com/graphdeco-inria/gaussian-splatting">3D Gaussian Splatting repository</a>, the method is expected to reconstruct a scene with reasonable scale. For reconstructing much larger datasets, like a city district, the original authors recommend to lower the learning rates of the positions and scaling factors of the Gaussians. The more extensive the scene, the lower these values should be.
 
@@ -357,31 +511,6 @@ By default, this bounding box is computed as the bounding box of all camera cent
 However, this bounding box might not be optimal in very specific cases, especially when the user wants to reconstruct with high details a very specific object located somewhere in the scene, or if the scene is very large, or if the camera centers are very far from the scene.
 The user is free to provide a custom bounding box to the `train.py` script, using the parameters `--bboxmin` and `--bboxmax`. Please note that the bounding box must be provided as strings, formatted as `"(x,y,z)"`, where `x`, `y` and `z` are the coordinates of the min and max points of the bounding box.
 
+</details>
 
-## Rendering, composition and animation
-
-The `metrics.py` script provides an example of how to load a refined SuGaR model for rendering a scene with the hybrid representation and the Gaussian Splatting rasterizer. We will add more details about this in a near future, as well as a notebook with a detailed tutorial.
-
-We also provide in the `blender` directory several python scripts to export from Blender composition and animation data of SuGaR meshes modified or animated within Blender. Additionally, we provide in the `sugar_scene/sugar_compositor.py` script a Python class that can be used to import such animation or composition data into PyTorch and apply it to the SuGaR hybrid representation. 
-
-The hybrid representation allows for high-quality rendering of the scene with the Gaussian Splatting rasterizer, as shown below.<br>
-
-<div align="center" >
-<img src="./media/blender/full_teaser.png" alt="teaser.gif" width="800"/>
-</div><br>
-
-The usage of these scripts and class may be a bit tricky, so we will add a detailed tutorial on how to use them in a near future.
-
-
-## Evaluation
-
-To evaluate the quality of the reconstructions, we provide a script `metrics.py` that computes the PSNR, SSIM and LPIPS metrics on test images. Start by optimizing SuGaR models for the desired scenes and a regularization method (`"density"` or `"sdf"`), then create a `.json` config file containing the paths to the scenes in the following format: `{source_images_dir_path: vanilla_gaussian_splatting_checkpoint_path}`.
-
-Finally, run the script as follows:
-
-```shell
-python metrics.py --scene_config <Path to the .json file> -r <"sdf" or "density"> 
-```
-
-Results are saved in a `.json` file in the `output/metrics/` directory. 
-Please refer to the script for more details on the command line arguments.
+</details>

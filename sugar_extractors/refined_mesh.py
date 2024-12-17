@@ -23,6 +23,8 @@ def extract_mesh_and_texture_from_refined_sugar(args):
     # --- Vanilla 3DGS parameters ---
     iteration_to_load = args.iteration_to_load
     gs_checkpoint_path = args.checkpoint_path
+    if gs_checkpoint_path[-1] != os.sep:
+        gs_checkpoint_path = gs_checkpoint_path + os.sep
     
     # --- Fine model parameters ---
     refined_model_path = args.refined_model_path
@@ -188,23 +190,32 @@ def extract_mesh_and_texture_from_refined_sugar(args):
     
     # Compute texture
     with torch.no_grad():
-        verts_uv, faces_uv, texture_img = extract_texture_image_and_uv_from_gaussians(
-            refined_sugar, square_size=square_size, n_sh=1, texture_with_gaussian_renders=True)
-        
-        textures_uv = TexturesUV(
-            maps=texture_img[None], #texture_img[None]),
-            verts_uvs=verts_uv[None],
-            faces_uvs=faces_uv[None],
-            sampling_mode='nearest',
+        if True:
+            from sugar_extractors.texture import compute_textured_mesh_for_sugar_mesh
+            textured_mesh = compute_textured_mesh_for_sugar_mesh(
+                sugar=refined_sugar,
+                square_size=square_size,
+                n_sh=0,
+                texture_with_gaussian_renders=True,
+                bg_color=[0., 0., 0.]
             )
-        textured_mesh = Meshes(
-            verts=[refined_sugar.surface_mesh.verts_list()[0]],   
-            faces=[refined_sugar.surface_mesh.faces_list()[0]],
-            textures=textures_uv,
-            )
+        else:
+            verts_uv, faces_uv, texture_img = extract_texture_image_and_uv_from_gaussians(
+                refined_sugar, square_size=square_size, n_sh=1, texture_with_gaussian_renders=True)
+            
+            textures_uv = TexturesUV(
+                maps=texture_img[None], #texture_img[None]),
+                verts_uvs=verts_uv[None],
+                faces_uvs=faces_uv[None],
+                sampling_mode='nearest',
+                )
+            textured_mesh = Meshes(
+                verts=[refined_sugar.surface_mesh.verts_list()[0]],   
+                faces=[refined_sugar.surface_mesh.faces_list()[0]],
+                textures=textures_uv,
+                )
     
     CONSOLE.print("Texture extracted.")
-    CONSOLE.print("Texture shape:", texture_img.shape)
     
     CONSOLE.print("Saving textured mesh...")
     

@@ -36,8 +36,12 @@ if __name__ == "__main__":
                         help='Max coordinates to use for foreground.')  
     
     parser.add_argument('--eval', type=str2bool, default=True, help='Use eval split.')
+    parser.add_argument('--white_background', type=str2bool, default=False, help='Use a white background instead of black.')
     
     parser.add_argument('--gpu', type=int, default=0, help='Index of GPU device to use.')
+    
+    parser.add_argument('--export_ply', type=str2bool, default=True, 
+                        help='If True, export a ply files with the refined 3D Gaussians at the end of the training.')
 
     args = parser.parse_args()
     

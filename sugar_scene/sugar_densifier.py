@@ -248,4 +248,4 @@ class SuGaRDensifier():
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.model.strengths, torch.ones_like(self.model.all_densities.view(-1, 1))*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "all_densities")
-        self.all_densities = optimizable_tensors["all_densities"]
+        self.model.all_densities = optimizable_tensors["all_densities"]
