@@ -77,6 +77,8 @@ RUN echo 'export PATH=/usr/bin:$PATH' >> /etc/profile.d/system_node.sh && \
 
 WORKDIR /sugar
 
+RUN pip3 install google-api-python-client google-auth google-auth-oauthlib watchdog
+
 # Default conda project
 RUN echo "conda activate sugar" >> ~/.bashrc
 

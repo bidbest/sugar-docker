@@ -2,7 +2,17 @@ import os
 import shutil
 from argparse import ArgumentParser
 
-def do_one(source_p, fps, is_360=False):
+def get_video_length(filename):
+    import cv2
+    video = cv2.VideoCapture(filename)
+
+    video_fps = video.get(cv2.CAP_PROP_FPS)
+    frame_count = video.get(cv2.CAP_PROP_FRAME_COUNT)
+    duration = int(frame_count / fps)
+
+    return duration, frame_count, video_fps
+
+def do_one(source_p, fps, n_frames, is_360=False):
 
     files_n = os.listdir(source_p)
     video_n = None
@@ -19,9 +29,15 @@ def do_one(source_p, fps, is_360=False):
     model_p = os.path.join(source_p, 'model')
     os.makedirs(input_p, exist_ok=True)
 
+    if n_frames is not None:
+
+        duration, frame_count, video_fps = get_video_length(filename)
+        tmp_fps = int(n_frames / duration)
+        fps = min(tmp_fps, video_fps)
+
     if not "input" in files_n:
         print("extracting frames!")
-        extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} -pix_fmt rgb8 {input_p}/img_%03d.png" # -pix_fmt rgb8 is needed for HDR 10bit videos
+        extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} -pix_fmt rgb8 {input_p}/img_%03d.jpg" # -pix_fmt rgb8 is needed for HDR 10bit videos
         exit_code = os.system(extract_frames_cmd)
         if exit_code != 0:
             print("error extracting frames")
@@ -83,9 +99,10 @@ def main(args):
 
     source_p = args.source_path
     fps = args.frame_per_second
+    n_frames = args.number_of_frames
     is_360 = args.is_360
     if not args.all:
-        do_one(source_p, fps, is_360)
+        do_one(source_p, fps, n_frames, is_360)
     else:
         dirs = os.listdir(source_p)
         for d in dirs:
@@ -100,6 +117,7 @@ if __name__ == '__main__':
     parser = ArgumentParser("Colmap converter")
     parser.add_argument("--source_path", "-s", required=True, type=str)
     parser.add_argument("--frame_per_second", "-f", default=1, type=int)
+    parser.add_argument("--number_of_frames", "-n", default=None, type=int)
     parser.add_argument("--all", "-a", action='store_true')
     parser.add_argument("--is_360", "-i", action='store_true')
     args = parser.parse_args()
