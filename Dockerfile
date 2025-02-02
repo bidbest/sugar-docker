@@ -56,7 +56,8 @@ RUN apt update && apt-get install -y \
 
 RUN git clone https://github.com/colmap/colmap.git
 WORKDIR /tmp/colmap
-RUN git checkout 98940342171e27fbf7a52223a39b5b3f699f23b8 &&\
+# Back up commit: 98940342171e27fbf7a52223a39b5b3f699f23b8
+RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
     mkdir build && cd build &&\
     cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=all-major &&\
     ninja &&\
@@ -81,6 +82,14 @@ RUN pip3 install google-api-python-client google-auth google-auth-oauthlib watch
 
 # Default conda project
 RUN echo "conda activate sugar" >> ~/.bashrc
+
+# This error occurs because there’s a conflict between the threading layer used
+# by Intel MKL (Math Kernel Library) and the libgomp library, 
+# which is typically used by OpenMP for parallel processing. 
+# This often happens when libraries like NumPy or SciPy are used in combination
+# with a multithreaded application (e.g., your Docker container or Python environment).
+# Solution, set threading layer explicitly! (GNU or INTEL)
+ENV MKL_THREADING_LAYER=GNU
 
 # Set up Meshroom paths
 RUN echo "export ALICEVISION_ROOT=/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/" >> ~/.bashrc &&\

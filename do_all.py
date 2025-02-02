@@ -8,40 +8,43 @@ def get_video_length(filename):
 
     video_fps = video.get(cv2.CAP_PROP_FPS)
     frame_count = video.get(cv2.CAP_PROP_FRAME_COUNT)
-    duration = int(frame_count / fps)
+    duration = int(frame_count / video_fps)
 
     return duration, frame_count, video_fps
 
-def do_one(source_p, fps, n_frames, is_360=False):
+def do_one(source_p, fps, n_frames, is_360=False, reduction=4):
 
     files_n = os.listdir(source_p)
     video_n = None
     for f in files_n:
-        if f.split(".")[-1] == "mp4":
+        if f.split(".")[-1] in ["mp4", "MP4"]:
             video_n = f
             break
 
-    if video_n is None:
+    if video_n is None and (not ("input" in files_n)):
         exit(1)
 
-    video_p = os.path.join(source_p, video_n)
+
     input_p = os.path.join(source_p, 'input')
     model_p = os.path.join(source_p, 'model')
     os.makedirs(input_p, exist_ok=True)
 
-    if n_frames is not None:
+    if not video_n is None:
+        video_p = os.path.join(source_p, video_n)
+        if n_frames is not None:
 
-        duration, frame_count, video_fps = get_video_length(filename)
-        tmp_fps = int(n_frames / duration)
-        fps = min(tmp_fps, video_fps)
+            duration, frame_count, video_fps = get_video_length(video_p)
+            tmp_fps = int(n_frames / duration)
+            fps = min(tmp_fps, video_fps)
+            fps = max(fps, 1)
 
-    if not "input" in files_n:
-        print("extracting frames!")
-        extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} -pix_fmt rgb8 {input_p}/img_%03d.jpg" # -pix_fmt rgb8 is needed for HDR 10bit videos
-        exit_code = os.system(extract_frames_cmd)
-        if exit_code != 0:
-            print("error extracting frames")
-            exit(exit_code)
+        if not "input" in files_n:
+            print("extracting frames!")
+            extract_frames_cmd = f"ffmpeg -i {video_p} -r {fps} -pix_fmt rgb8 -q:v 4 {input_p}/img_%03d.jpg" # -pix_fmt rgb8 is needed for HDR 10bit videos
+            exit_code = os.system(extract_frames_cmd)
+            if exit_code != 0:
+                print("error extracting frames")
+                exit(exit_code)
 
     if is_360:
         if not "input" in files_n and not "img_360" in files_n:
@@ -85,8 +88,6 @@ def do_one(source_p, fps, n_frames, is_360=False):
 
     if is_360:
         reduction = 2
-    else:
-        reduction = 4
 
     train_cmd = f"python /sugar/submodules/gaussian-splatting-docker/train.py -s {source_p} -r {reduction} -m {model_p} --data_device cpu"
     exit_code = os.system(train_cmd)
@@ -109,7 +110,7 @@ def main(args):
             tmp = os.path.join(source_p, d)
             if not os.path.isdir(tmp):
                 continue
-            do_one(tmp, fps, is_360)
+            do_one(tmp, fps, is_360, args.reduction)
 
 
 
@@ -118,6 +119,7 @@ if __name__ == '__main__':
     parser.add_argument("--source_path", "-s", required=True, type=str)
     parser.add_argument("--frame_per_second", "-f", default=1, type=int)
     parser.add_argument("--number_of_frames", "-n", default=None, type=int)
+    parser.add_argument("--reduction", "-r", default=1, type=int)
     parser.add_argument("--all", "-a", action='store_true')
     parser.add_argument("--is_360", "-i", action='store_true')
     args = parser.parse_args()

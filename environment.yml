@@ -244,6 +244,6 @@ dependencies:
       - threadpoolctl==3.2.0
       - tzdata==2023.3
       - werkzeug==3.0.1
-      - opencv-python==4.10.0
+      - opencv-python==4.10.0.84
       - /tmp/gaussian_splatting/submodules/diff-gaussian-rasterization
       - /tmp/gaussian_splatting/submodules/simple-knn

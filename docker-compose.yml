@@ -1,11 +1,10 @@
-version: "3.8"
 services:
   sugar:
     command: /bin/bash
     stdin_open: true
     tty: true
     build: .
-    image: sugar:cuda-11.8-8
+    image: sugar:cuda-11.8-9
     network_mode: "host"
     environment:
       - DISPLAY=:1
