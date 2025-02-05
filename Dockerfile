@@ -52,17 +52,32 @@ RUN apt update && apt-get install -y \
     qtbase5-dev \
     libqt5opengl5-dev \
     libcgal-dev \
-    libceres-dev
+    libceres-dev \
+    libomp-dev
 
-RUN git clone https://github.com/colmap/colmap.git
+# RUN git clone https://github.com/colmap/colmap.git
+COPY colmap/ /tmp/colmap/
 WORKDIR /tmp/colmap
 # Back up commit: 98940342171e27fbf7a52223a39b5b3f699f23b8
 RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
     mkdir build && cd build &&\
-    cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=all-major &&\
+    cmake .. -GNinja \
+    -DCMAKE_CUDA_ARCHITECTURES=all-major \
+    -DOPENMP_ENABLED=ON && \
     ninja &&\
     ninja install
 
+# WORKDIR /tmp/colmap/pycolmap
+# # Install pycolmap with OpenMP flags explicitly set
+# RUN conda run -n sugar bash -c "\
+#     export CMAKE_ARGS='-DOpenMP_C_FLAGS=-fopenmp \
+#                         -DOpenMP_C_LIB_NAMES=gomp \
+#                         -DOpenMP_gomp_LIBRARY=/usr/lib/gcc/x86_64-linux-gnu/9/libgomp.so \
+#                         -DOpenMP_CXX_FLAGS=-fopenmp \
+#                         -DOpenMP_CXX_LIB_NAMES=gomp' && \
+#     python -m pip install . --retries 30 --timeout 360"
+
+RUN conda run -n sugar python -m pip install pycolmap
 
 # Install Node.js 21.x at the system level
 RUN curl -fsSL https://deb.nodesource.com/setup_21.x | bash - && \
