@@ -28,8 +28,14 @@ ARG TORCH_CUDA_ARCH_LIST="3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6"
 COPY environment.yml /tmp/environment.yml
 COPY gaussian_splatting/ /tmp/gaussian_splatting/
 WORKDIR /tmp/
-RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gaussian_splatting
+RUN conda env create --file environment.yml
 RUN rm /tmp/environment.yml
+
+COPY submodules/AtomGS /tmp/AtomGS
+WORKDIR /tmp/AtomGS/
+RUN conda env create --file environment.yml
+
+RUN  conda init bash && exec bash && conda activate gaussian_splatting
 
 # Install colmap
 RUN apt update && apt-get install -y \
@@ -54,6 +60,7 @@ RUN apt update && apt-get install -y \
     libcgal-dev \
     libceres-dev
 
+WORKDIR /tmp/
 RUN git clone https://github.com/colmap/colmap.git
 WORKDIR /tmp/colmap
 # Back up commit: 98940342171e27fbf7a52223a39b5b3f699f23b8
