@@ -55,8 +55,8 @@ RUN apt update && apt-get install -y \
     libceres-dev \
     libomp-dev
 
-# RUN git clone https://github.com/colmap/colmap.git
-COPY colmap/ /tmp/colmap/
+RUN git clone https://github.com/colmap/colmap.git
+# COPY colmap/ /tmp/colmap/
 WORKDIR /tmp/colmap
 # Back up commit: 98940342171e27fbf7a52223a39b5b3f699f23b8
 RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
