@@ -7,6 +7,7 @@ import shutil
 import pycolmap
 from argparse import ArgumentParser
 import copy
+import open3d as o3d
 
 class FFmpegWrapper:
     def __init__(self, video_path: str, output_dir: str):
@@ -330,7 +331,7 @@ def compute_overlaps_in_rec(rec):
     return overl, peak_pairs
 
 
-def filter_rec(rec_orig):
+def filter_rec(rec_orig, img_path):
 
     rec = copy.deepcopy(rec_orig)   
     pcd = rec.points3D
@@ -338,6 +339,8 @@ def filter_rec(rec_orig):
 
     pcd_o3d = np.array([pcd[p].xyz for p in pcd])
     pcd_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pcd_o3d))
+    # o3d.visualization.draw_geometries([pcd_o3d])
+
     pcd_col = np.array([pcd[p].color for p in pcd])
 
     n_views = np.array([pcd[p].track.length() for p in pcd])
@@ -353,14 +356,31 @@ def filter_rec(rec_orig):
 
     [rec.delete_point3D(i) for i in to_remove_ids]
 
-    pcd = rec.points3D
-    ids = np.array(list(final.point3D_ids()))
+    imgs = [rec.images[i] for i in rec.images]
+    ids = np.array([i for i in rec.images])
+    n_points2d = np.asarray([i.num_points2D() for i in imgs])
+    n_points3d = np.asarray([i.num_points3D for i in imgs])
+    ratio_2d3d = n_points3d / n_points2d
 
-    n_views = np.array([pcd[p].track.length() for p in pcd])
+    thr_2dviews = np.percentile(n_points2d, 20)
+    thr_ratio = np.percentile(ratio_2d3d, 20)
 
+    # We filter out images that don't have enough 2d points (featureless); and images that didn't triangulated
+    # enough 3d points (very few overlap with other images)
+    to_remove = np.where((((n_points2d > thr_views) * (ratio_2d3d > thr_ratio)) * 1) == 0 )[0]
+    to_remove_ids = ids[to_remove]
 
-    
+    [rec.deregister_image(i) for i in to_remove_ids]
+    for i in to_remove_ids:
+        p_to_rem = rec.images[i].get_observation_points2D()
+        [rec.delete_point3D(i.point3D_id) for i in p_to_rem]
+        os.remove(os.path.join(img_path, rec.images[i].name))
+        del rec.images[i]
 
+    print(f"Original images: {len(rec_orig.images)} -> Filtered images: {len(rec.images)}")
+    print(f"Original 3D points: {len(rec_orig.points3D)} -> Filtered 3D points: {len(rec.points3D)}")
+
+    return rec
 
 
 def do_one(source_path, n_images, clean=True):
@@ -413,6 +433,8 @@ def do_one(source_path, n_images, clean=True):
     print(rec2.summary())
     db_fin_path = os.path.join(distorted_path, "database_final.db")
 
+    distorted_sparse_0_path = os.path.join(distorted_sparse_path, "0")
+    os.makedirs(distorted_sparse_0_path, exist_ok=True)
     if os.path.isfile(os.path.join(sparse_path, "images.bin")):
         print("Loading final reconstruction")
         final = pycolmap.Reconstruction(sparse_path)
@@ -420,13 +442,26 @@ def do_one(source_path, n_images, clean=True):
     else:
         frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in rec2.images])
         fmw.extract_specific_frames(frame_indices)
-        final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, image_list=[])
+        final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
 
-        distorted_sparse_0_path = os.path.join(distorted_sparse_path, "0")
-        os.makedirs(distorted_sparse_0_path, exist_ok=True)
         final.write_binary(distorted_sparse_0_path)
     
     print(final.summary())
+
+    overl, _ = compute_overlaps_in_rec(rec)
+    overl2, _ = compute_overlaps_in_rec(rec2)
+    overlf, _ = compute_overlaps_in_rec(final)
+    print(f"Original SFM: min_overlap: {np.min(overl)}; average_overl: {np.mean(overl)}; reconstruction summary: {rec.summary()}\n\n")
+    print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
+    print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
+
+    print("filtering reconstruction....")
+    final_filtered = filter_rec(final, input_p)
+    print(final_filtered.summary())
+    shutil.rmtree(distorted_sparse_0_path)
+    os.makedirs(distorted_sparse_0_path, exist_ok=True)
+    final_filtered.write_binary(distorted_sparse_0_path)
+
 
     img_undist_cmd = ("colmap image_undistorter \
         --image_path " + input_p + " \
@@ -447,15 +482,6 @@ def do_one(source_path, n_images, clean=True):
         source_file = os.path.join(source_path, "sparse", file)
         destination_file = os.path.join(source_path, "sparse", "0", file)
         shutil.move(source_file, destination_file)
-
-
-    overl, _ = compute_overlaps_in_rec(rec)
-    overl2, _ = compute_overlaps_in_rec(rec2)
-    overlf, _ = compute_overlaps_in_rec(final)
-    print(f"Original SFM: min_overlap: {np.min(overl)}; average_overl: {np.mean(overl)}; reconstruction summary: {rec.summary()}\n\n")
-    print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
-    print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
-
     
 def main(args):
 
