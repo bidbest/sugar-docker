@@ -36,7 +36,7 @@ class FFmpegWrapper:
 
         if len(os.listdir(self.tmp_path)) == 0:
 
-            extract_frames_cmd = f"ffmpeg -i {self.video_path}  -pix_fmt rgb8 -q:v 4  -vf 'scale=-1:480' {self.tmp_path}/f_%08d.jpeg"
+            extract_frames_cmd = f"ffmpeg -i {self.video_path}  -pix_fmt rgb8 -q:v 4  -vf 'scale=-1:480' {self.tmp_path}/%08d.jpeg"
             exit_code = os.system(extract_frames_cmd)
             if exit_code != 0:
                 print("error extracting frames")
