@@ -36,7 +36,7 @@ class FFmpegWrapper:
 
         if len(os.listdir(self.tmp_path)) == 0:
 
-            extract_frames_cmd = f"ffmpeg -i {self.video_path}  -pix_fmt rgb8 -q:v 4  -vf 'scale=-1:480' {self.tmp_path}/f_%08d.jpeg"
+            extract_frames_cmd = f"ffmpeg -i {self.video_path}  -pix_fmt rgb8 -q:v 4  -vf 'scale=-1:480' {self.tmp_path}/%08d.jpeg"
             exit_code = os.system(extract_frames_cmd)
             if exit_code != 0:
                 print("error extracting frames")
@@ -53,7 +53,7 @@ class FFmpegWrapper:
         select_filter = "+".join([f"eq(n\\,{f})" for f in frame_indices])
         
         # Build FFmpeg command
-        cmd = f"ffmpeg -i {self.video_path} -vf select='{select_filter}' -vsync vfr -pix_fmt rgb8 -q:v 4 {self.output_dir}/f_%08d.jpeg"
+        cmd = f"ffmpeg -i {self.video_path} -vf select='{select_filter}' -vsync vfr -pix_fmt rgb8 -q:v 4 {self.output_dir}/%08d.jpeg"
 
         exit_code = os.system(cmd)
         if exit_code != 0:
@@ -61,7 +61,7 @@ class FFmpegWrapper:
             exit(exit_code)
 
     def ind_to_frame_name(self, ind):
-            name = "f_{:08d}.jpeg".format(ind)
+            name = "{:08d}.jpeg".format(ind)
             return os.path.join(self.tmp_path, name)
 
     def get_list_of_n_frames(self, n: int, start_frame: Optional[str] = None, end_frame: Optional[str] = None) -> List[str]:
@@ -262,8 +262,7 @@ def iterative_reconstruc(source_path, db_path, image_path, output_path, image_li
 
 
 def _name_to_ind(name):
-    tmp = name.split('.')[0]
-    ind = int(tmp.split('f_')[-1])
+    ind = int(name.split('.')[0])
     return ind
 
 
@@ -293,17 +292,20 @@ def incremental_reconstruction(source_path, db_path, image_path, output_path, im
 
     new_images = compute_best_new_images(rec, image_list, fmw)
     rec2 = rec
+    rec2.write_binary(output_path)
 
     while len(rec2.images) < n_images and len(new_images) > 0:
 
         new_images = compute_best_new_images(rec2, image_list, fmw)
         print(f"Addin {len(new_images)} new images")
         image_list.extend(new_images)
+        image_list = list(set(image_list)) 
         tmp = reconstruct(source_path, db_path, image_path, output_path, image_list, output_path, clean=False)
 
         if tmp is None:
-            import pdb; pdb.set_trace()
-            continue
+            print(len(image_list))
+            print("new recosntruction failed ...")
+            break
 
         rec2 = tmp
         rec2.write_binary(output_path)
