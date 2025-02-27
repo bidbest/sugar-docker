@@ -53,7 +53,7 @@ class FFmpegWrapper:
         select_filter = "+".join([f"eq(n\\,{f})" for f in frame_indices])
         
         # Build FFmpeg command
-        cmd = f"ffmpeg -i {self.video_path} -vf select='{select_filter}' -vsync vfr -pix_fmt rgb8 -q:v 4 {self.output_dir}/%08d.jpeg"
+        cmd = f'ffmpeg -i {self.video_path} -vf "select={select_filter},scale=-1:960" -vsync vfr -pix_fmt rgb8 -q:v 4  {self.output_dir}/%08d.jpeg'
 
         exit_code = os.system(cmd)
         if exit_code != 0:
@@ -348,8 +348,8 @@ def filter_rec(rec_orig, img_path):
     n_views = np.array([pcd[p].track.length() for p in pcd])
     rep_error = np.array([pcd[p].error for p in pcd])
 
-    thr_views = np.percentile(n_views, 60)
-    thr_error = np.percentile(rep_error, 80)
+    thr_views = np.percentile(n_views, 10)
+    thr_error = np.percentile(rep_error, 90)
 
     # Good views have: n_views > thr_views and  rep_error < thr_error. So all others are bad views.
     # by doing [True, False, False] * 1 you get [1, 0 ,0]; then chosing np.where == 0; is like doing not()
@@ -364,8 +364,8 @@ def filter_rec(rec_orig, img_path):
     n_points3d = np.asarray([i.num_points3D for i in imgs])
     ratio_2d3d = n_points3d / n_points2d
 
-    thr_2dviews = np.percentile(n_points2d, 20)
-    thr_ratio = np.percentile(ratio_2d3d, 20)
+    thr_2dviews = np.percentile(n_points2d, 10)
+    thr_ratio = np.percentile(ratio_2d3d, 10)
 
     # We filter out images that don't have enough 2d points (featureless); and images that didn't triangulated
     # enough 3d points (very few overlap with other images)
@@ -385,7 +385,7 @@ def filter_rec(rec_orig, img_path):
     return rec
 
 
-def do_one(source_path, n_images, clean=True):
+def do_one(source_path, n_images, clean=False):
 
     files_n = os.listdir(source_path)
     video_n = None
