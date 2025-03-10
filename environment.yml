@@ -233,6 +233,7 @@ dependencies:
       - pandas==2.1.4
       - pexpect==4.9.0
       - prompt-toolkit==3.0.43
+      - pybind11==2.13.6
       - pymcubes==0.1.4
       - pyparsing==3.1.1
       - pyquaternion==0.9.9

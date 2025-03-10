@@ -28,8 +28,14 @@ ARG TORCH_CUDA_ARCH_LIST="3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6"
 COPY environment.yml /tmp/environment.yml
 COPY gaussian_splatting/ /tmp/gaussian_splatting/
 WORKDIR /tmp/
-RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gaussian_splatting
+RUN conda env create --file environment.yml
 RUN rm /tmp/environment.yml
+
+COPY submodules/AtomGS /tmp/AtomGS
+WORKDIR /tmp/AtomGS/
+RUN conda env create --file environment.yml
+
+RUN  conda init bash && exec bash && conda activate gaussian_splatting
 
 # Install colmap
 RUN apt update && apt-get install -y \
@@ -52,17 +58,33 @@ RUN apt update && apt-get install -y \
     qtbase5-dev \
     libqt5opengl5-dev \
     libcgal-dev \
-    libceres-dev
+    libceres-dev \
+    libomp-dev
 
+WORKDIR /tmp/
 RUN git clone https://github.com/colmap/colmap.git
+# COPY colmap/ /tmp/colmap/
 WORKDIR /tmp/colmap
 # Back up commit: 98940342171e27fbf7a52223a39b5b3f699f23b8
 RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
     mkdir build && cd build &&\
-    cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=all-major &&\
+    cmake .. -GNinja \
+    -DCMAKE_CUDA_ARCHITECTURES=all-major \
+    -DOPENMP_ENABLED=ON && \
     ninja &&\
     ninja install
 
+# WORKDIR /tmp/colmap/pycolmap
+# # Install pycolmap with OpenMP flags explicitly set
+# RUN conda run -n sugar bash -c "\
+#     export CMAKE_ARGS='-DOpenMP_C_FLAGS=-fopenmp \
+#                         -DOpenMP_C_LIB_NAMES=gomp \
+#                         -DOpenMP_gomp_LIBRARY=/usr/lib/gcc/x86_64-linux-gnu/9/libgomp.so \
+#                         -DOpenMP_CXX_FLAGS=-fopenmp \
+#                         -DOpenMP_CXX_LIB_NAMES=gomp' && \
+#     python -m pip install . --retries 30 --timeout 360"
+
+RUN conda run -n sugar python -m pip install pycolmap
 
 # Install Node.js 21.x at the system level
 RUN curl -fsSL https://deb.nodesource.com/setup_21.x | bash - && \
