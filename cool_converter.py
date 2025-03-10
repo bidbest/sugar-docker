@@ -166,6 +166,7 @@ def extract_features(db_path, image_path, image_list):
             --ImageReader.single_camera 1 " + "\
             --image_list_path " + img_list_path + "\
             --ImageReader.camera_model OPENCV " + "\
+            --SiftExtraction.max_num_features 5000 " + "\
             --SiftExtraction.use_gpu " + str(True)
 
     else:
@@ -174,6 +175,7 @@ def extract_features(db_path, image_path, image_list):
             --image_path " + image_path + "\
             --ImageReader.single_camera 1 " + "\
             --ImageReader.camera_model OPENCV " + "\
+            --SiftExtraction.max_num_features 5000 " + "\
             --SiftExtraction.use_gpu " + str(True)
 
     exit_code = os.system(feat_extracton_cmd)
