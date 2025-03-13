@@ -83,3 +83,45 @@ def compute_overlaps_in_rec(rec):
     threshold = np.percentile(overl, 40)
     peak_pairs = [(sorted_image_ids[i], sorted_image_ids[i+1]) for i in range(len(overl)) if overl[i] <= threshold]
     return overl, peak_pairs
+
+
+def is_reconstruction_good(rec, local_overlap_threshold=20, global_overlap_threshold=50, max_bad_pairs_ratio=0.0):
+    """
+    Evaluate the quality of a reconstruction based on overlap metrics between consecutive images.
+    
+    Local quality is defined by requiring that the overlap for each image pair is above
+    a minimum threshold. Global quality is measured as the average overlap across all pairs.
+    
+    Parameters:
+        rec: Reconstruction object with an 'images' attribute.
+        local_overlap_threshold (int): Minimum acceptable overlap count for each consecutive image pair.
+                                       This value should be determined empirically.
+        global_overlap_threshold (int): Minimum acceptable average overlap across all consecutive pairs.
+        max_bad_pairs_ratio (float): Maximum allowed ratio of image pairs below the local threshold.
+                                     Set to 0.0 for a strict requirement.
+    
+    Returns:
+        bool: True if the reconstruction meets both local and global quality criteria, False otherwise.
+    """
+    import numpy as np
+
+    # Compute overlaps using the existing function in this module.
+    overl, _ = compute_overlaps_in_rec(rec)
+    
+    if not overl:
+        # Not enough pairs to judge the reconstruction quality.
+        print("No overal images!")
+        return False
+
+    # Evaluate local quality: count image pairs below the local threshold.
+    bad_pairs = [o for o in overl if o < local_overlap_threshold]
+    print(f"There are {len(bad_pairs)} bad bad_pairs out of {len(overl)}. Threshold: {local_overlap_threshold}")
+
+    ratio_bad = len(bad_pairs) / len(overl)
+    local_good = (ratio_bad <= max_bad_pairs_ratio)
+    
+    print(f"Average overlap: {np.mean(overl)}; target: {global_overlap_threshold}")
+    # Evaluate global quality: average overlap should be at least the global threshold.
+    global_good = (np.mean(overl) >= global_overlap_threshold)
+    
+    return local_good and global_good

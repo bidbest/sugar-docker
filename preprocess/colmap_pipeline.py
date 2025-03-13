@@ -170,9 +170,11 @@ def compute_best_new_images(rec, frames_list, fmw):
 
     return new_images
 
-def incremental_reconstruction(source_path, db_path, image_path, output_path, image_list, fmw, rec, n_images):
+def incremental_reconstruction(source_path, db_path, image_path, output_path, image_list, fmw, rec, n_images,
+                               local_overlap_threshold=50, global_overlap_threshold=100, max_bad_pairs_ratio=0.0):
     """
-    Incrementally refine the reconstruction by adding new images until a target is reached.
+    Incrementally refine the reconstruction by adding new images until a target is reached
+    or a good reconstruction quality is achieved as defined by overlap metrics.
     
     Parameters:
         source_path (str): Base directory.
@@ -182,29 +184,42 @@ def incremental_reconstruction(source_path, db_path, image_path, output_path, im
         image_list (list): List of images used in reconstruction.
         fmw: FFmpegWrapper object.
         rec: Initial reconstruction object.
-        n_images (int): Target number of images.
+        n_images (int): Maximum allowed number of images.
+        local_overlap_threshold (int): Minimum acceptable overlap for each image pair.
+        global_overlap_threshold (int): Minimum acceptable average overlap across all pairs.
+        max_bad_pairs_ratio (float): Maximum allowed ratio of image pairs below the local threshold.
     
     Returns:
         Tuple (refined reconstruction, new_images added in last iteration).
     """
+    from metrics import is_reconstruction_good
+
     new_images = compute_best_new_images(rec, image_list, fmw)
     rec2 = rec
     rec2.write_binary(output_path)
 
-    while len(rec2.images) < n_images and len(new_images) > 0:
+    # Continue refinement until:
+    # - The reconstruction has fewer than n_images,
+    # - The quality is not yet "good" (as defined by our metric),
+    # - And there are still new images to add.
+    while len(rec2.images) < n_images and \
+          not is_reconstruction_good(rec2, local_overlap_threshold, global_overlap_threshold, max_bad_pairs_ratio) and \
+          len(new_images) > 0:
+
         new_images = compute_best_new_images(rec2, image_list, fmw)
-        print(f"Addin {len(new_images)} new images")
+        print(f"Adding {len(new_images)} new images")
         image_list.extend(new_images)
         image_list = list(set(image_list))
         tmp = reconstruct(source_path, db_path, image_path, output_path, image_list, output_path, clean=False)
         if tmp is None:
             print(len(image_list))
-            print("new recosntruction failed ...")
+            print("New reconstruction failed ...")
             break
         rec2 = tmp
         rec2.write_binary(output_path)
 
     return rec2, new_images
+
 
 def filter_rec(rec_orig, img_path):
     """
