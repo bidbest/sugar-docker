@@ -15,27 +15,23 @@ FROM pytorch/pytorch:2.1.2-cuda11.8-cudnn8-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update and install tzdata separately
-RUN apt update && apt install -y tzdata
 
-# Install necessary packages
-RUN apt install -y git && \
-    apt install -y libglew-dev libassimp-dev libboost-all-dev libgtk-3-dev libopencv-dev libglfw3-dev libavdevice-dev libavcodec-dev libeigen3-dev libxxf86vm-dev libembree-dev && \
-    apt clean && apt install wget && rm -rf /var/lib/apt/lists/*
 
-ARG TORCH_CUDA_ARCH_LIST="3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6"
+ARG TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6"
 
-COPY environment.yml /tmp/environment.yml
-COPY gaussian_splatting/ /tmp/gaussian_splatting/
-WORKDIR /tmp/
-RUN conda env create --file environment.yml
-RUN rm /tmp/environment.yml
 
-COPY submodules/AtomGS /tmp/AtomGS
-WORKDIR /tmp/AtomGS/
-RUN conda env create --file environment.yml
 
-RUN  conda init bash && exec bash && conda activate gaussian_splatting
+# COPY environment.yml /tmp/environment.yml
+# COPY gaussian_splatting/ /tmp/gaussian_splatting/
+# WORKDIR /tmp/
+# RUN conda env create --file environment.yml
+# RUN rm /tmp/environment.yml
+
+# COPY submodules/AtomGS /tmp/AtomGS
+# WORKDIR /tmp/AtomGS/
+# RUN conda env create --file environment.yml
+
+# RUN  conda init bash && exec bash && conda activate gaussian_splatting
 
 # Install colmap
 RUN apt update && apt-get install -y \
@@ -74,29 +70,9 @@ RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
     ninja &&\
     ninja install
 
-# WORKDIR /tmp/colmap/pycolmap
-# # Install pycolmap with OpenMP flags explicitly set
-# RUN conda run -n sugar bash -c "\
-#     export CMAKE_ARGS='-DOpenMP_C_FLAGS=-fopenmp \
-#                         -DOpenMP_C_LIB_NAMES=gomp \
-#                         -DOpenMP_gomp_LIBRARY=/usr/lib/gcc/x86_64-linux-gnu/9/libgomp.so \
-#                         -DOpenMP_CXX_FLAGS=-fopenmp \
-#                         -DOpenMP_CXX_LIB_NAMES=gomp' && \
-#     python -m pip install . --retries 30 --timeout 360"
-
 RUN conda run -n sugar python -m pip install pycolmap
 
 # Install Node.js 21.x at the system level
-RUN curl -fsSL https://deb.nodesource.com/setup_21.x | bash - && \
-    apt update && apt-get install -y \
-    nodejs \
-    aptitude
-
-RUN aptitude install -y npm
-
-# Ensure the system Node.js takes priority over Conda's Node.js
-RUN echo 'export PATH=/usr/bin:$PATH' >> /etc/profile.d/system_node.sh && \
-    chmod +x /etc/profile.d/system_node.sh
 
 WORKDIR /sugar
 
@@ -113,8 +89,4 @@ RUN echo "conda activate sugar" >> ~/.bashrc
 # Solution, set threading layer explicitly! (GNU or INTEL)
 ENV MKL_THREADING_LAYER=GNU
 
-# Set up Meshroom paths
-RUN echo "export ALICEVISION_ROOT=/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/" >> ~/.bashrc &&\
-    echo "export PATH=$PATH:/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/bin/" >> ~/.bashrc &&\
-    echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/sugar/submodules/Meshroom-2023.3.0-linux/Meshroom-2023.3.0/aliceVision/lib/" >> ~/.bashrc &&\
-    echo 'export PATH=/usr/bin:$PATH' >> ~/.bashrc
+RUN echo 'export PATH=/usr/bin:$PATH' >> ~/.bashrc
