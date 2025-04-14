@@ -12,26 +12,26 @@ FROM pytorch/pytorch:2.1.2-cuda11.8-cudnn8-devel
 # - The default-runtime for container should be set to "nvidia" in the deamon.json file. See this: https://github.com/NVIDIA/nvidia-docker/issues/1033
 # - For the above to work, the nvidia-container-runtime should be installed in your host. Tested with version 1.14.0-rc.2
 # - Make sure NVIDIA's drivers are updated in the host machine. Tested with 525.125.06
-
 ENV DEBIAN_FRONTEND=noninteractive
-
-
-
 ARG TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6"
 
+# Update Conda and use new solver
+# RUN conda update -n base conda && \
+RUN conda install -n base conda-libmamba-solver && \
+    conda config --set solver libmamba && \
+    conda init bash && exec bash
 
 
-# COPY environment.yml /tmp/environment.yml
-# COPY gaussian_splatting/ /tmp/gaussian_splatting/
-# WORKDIR /tmp/
-# RUN conda env create --file environment.yml
-# RUN rm /tmp/environment.yml
+COPY submodules/gaussian-splatting/environment.yml /tmp/environment.yml
+COPY  submodules/gaussian-splatting/submodules /tmp/submodules
+WORKDIR /tmp/
+RUN conda env create --file environment.yml
 
-# COPY submodules/AtomGS /tmp/AtomGS
-# WORKDIR /tmp/AtomGS/
-# RUN conda env create --file environment.yml
+RUN  conda init bash && exec bash && conda activate gaussian_splatting
 
-# RUN  conda init bash && exec bash && conda activate gaussian_splatting
+RUN conda run -n gaussian_splatting python -m pip install pycolmap
+
+
 
 # Install colmap
 RUN apt update && apt-get install -y \
@@ -70,16 +70,19 @@ RUN git checkout 682ea9ac4020a143047758739259b3ff04dabe8d &&\
     ninja &&\
     ninja install
 
-RUN conda run -n sugar python -m pip install pycolmap
-
-# Install Node.js 21.x at the system level
-
-WORKDIR /sugar
-
+# Google API to get data from gdrive
 RUN pip3 install google-api-python-client google-auth google-auth-oauthlib watchdog
 
-# Default conda project
-RUN echo "conda activate sugar" >> ~/.bashrc
+# Update submodule for faster training of 3dgs
+WORKDIR /tmp/submodules
+RUN rm -rf diff-gaussian-rasterization
+RUN git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization.git
+WORKDIR /tmp/submodules/diff-gaussian-rasterization
+RUN git checkout 3dgs_accel
+RUN conda run -n gaussian_splatting python -m pip uninstall diff-gaussian-rasterization -y
+RUN conda run -n gaussian_splatting python -m pip install .
+
+WORKDIR /sugar
 
 # This error occurs because there’s a conflict between the threading layer used
 # by Intel MKL (Math Kernel Library) and the libgomp library, 
