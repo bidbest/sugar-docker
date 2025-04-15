@@ -53,7 +53,7 @@ class FFmpegWrapper:
         select_filter = "+".join([f"eq(n\\,{f})" for f in frame_indices])
         
         # Build FFmpeg command
-        cmd = f'ffmpeg -i {self.video_path} -vf "select={select_filter},scale=-1:960" -vsync vfr -pix_fmt rgb8 -q:v 4  {self.output_dir}/%08d.jpeg'
+        cmd = f'ffmpeg -i {self.video_path} -vf "select={select_filter}" -vsync vfr -pix_fmt rgb8 -q:v 4  {self.output_dir}/%08d.jpeg'
 
         exit_code = os.system(cmd)
         if exit_code != 0:
@@ -490,12 +490,12 @@ def do_one(source_path, n_images, clean=False):
 def main(args):
 
     source_path = args.source_path
-    n_images = args.number_of_frames
+    n_images = args.max_number_of_frames
     do_one(source_path, n_images)
 
 if __name__ == '__main__':
     parser = ArgumentParser("Colmap converter")
     parser.add_argument("--source_path", "-s", required=True, type=str)
-    parser.add_argument("--number_of_frames", "-n", default=200, type=int)
+    parser.add_argument("--max_number_of_frames", "-n", default=200, type=int)
     args = parser.parse_args()
     main(args)

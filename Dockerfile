@@ -27,11 +27,9 @@ COPY  submodules/gaussian-splatting/submodules /tmp/submodules
 WORKDIR /tmp/
 RUN conda env create --file environment.yml
 
-RUN  conda init bash && exec bash && conda activate gaussian_splatting
+RUN conda init bash && exec bash && conda activate gaussian_splatting
 
-RUN conda run -n gaussian_splatting python -m pip install pycolmap
-
-
+RUN pip install pycolmap open3d
 
 # Install colmap
 RUN apt update && apt-get install -y \
@@ -76,11 +74,19 @@ RUN pip3 install google-api-python-client google-auth google-auth-oauthlib watch
 # Update submodule for faster training of 3dgs
 WORKDIR /tmp/submodules
 RUN rm -rf diff-gaussian-rasterization
-RUN git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization.git
+RUN git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization.git --recursive
 WORKDIR /tmp/submodules/diff-gaussian-rasterization
 RUN git checkout 3dgs_accel
 RUN conda run -n gaussian_splatting python -m pip uninstall diff-gaussian-rasterization -y
 RUN conda run -n gaussian_splatting python -m pip install .
+
+
+# Install DepthAnything dependencies
+COPY ./submodules/DepthAnythingV2_docker/requirements.txt /tmp/requirements.txt
+WORKDIR /tmp/
+
+RUN pip install -r requirements.txt
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0
 
 WORKDIR /sugar
 
