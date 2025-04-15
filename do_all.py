@@ -13,7 +13,7 @@ def get_video_length(filename):
 
     return duration, frame_count, video_fps
 
-def do_one(source_p, n_frames, is_360=False,):
+def do_one(source_p, n_frames, clean=False, is_360=False,):
 
     start_time = time.time()
 
@@ -36,7 +36,10 @@ def do_one(source_p, n_frames, is_360=False,):
 
     if not (os.path.isdir(images_p) and os.path.isdir(sparse_p)):
         # extract frames, and perform SFM from video
-        sfm_command = f"python cool_converter.py -s {source_p} -n {n_frames}"
+        sfm_command = f"python preprocess/main_video_process.py -s {source_p} -n {n_frames}"
+        if clean:
+            sfm_command += " -c"
+            
         print(sfm_command)
         exit_code = os.system(sfm_command)
         if exit_code != 0:
@@ -110,15 +113,16 @@ def main(args):
 
     source_p = args.source_path
     n_frames = args.max_number_of_frames
+    clean = args.clean
     if not args.all:
-        do_one(source_p, n_frames)
+        do_one(source_p, n_frames, clean)
     else:
         dirs = os.listdir(source_p)
         for d in dirs:
             tmp = os.path.join(source_p, d)
             if not os.path.isdir(tmp):
                 continue
-            do_one(tmp, n_frames)
+            do_one(tmp, n_frames, clean)
 
 
 
@@ -126,6 +130,7 @@ if __name__ == '__main__':
     parser = ArgumentParser("Colmap converter")
     parser.add_argument("--source_path", "-s", required=True, type=str)
     parser.add_argument("--max_number_of_frames", "-n", default=400, type=int)
+    parser.add_argument("--clean", "-c", action='store_true')
     parser.add_argument("--all", "-a", action='store_true')
     args = parser.parse_args()
 
