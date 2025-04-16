@@ -144,105 +144,159 @@ def iterative_reconstruc(source_path, db_path, image_path, output_path, image_li
     
     return rec, frames_list
 
-def compute_best_new_images(rec, frames_list, fmw, min_overlap, new_image_budget):
+def get_overlap_gap_frames(rec, fmw, min_overlap, new_image_budget):
     """
-    Computes new candidate images to add between pairs of existing images
-    where the overlap is below min_overlap.
+    Use consecutive overlap gaps (existing logic) to propose candidate frames.
     
     Parameters:
-      rec                : the current reconstruction (COLMAP reconstruction)
-      frames_list        : list of frame paths (unused in this implementation,
-                           but may be kept for compatibility)
-      fmw                : instance of FFmpegWrapper used to get frame paths by index
-      min_overlap        : the required minimum overlap (an integer) per consecutive pair.
-      new_image_budget   : total number of new images to add in this iteration.
-    
+        rec (pycolmap.Reconstruction): Current reconstruction.
+        fmw (FFmpegWrapper): Instance providing frame filenames (and ind_to_frame_name).
+        min_overlap (int): Minimum required overlap threshold.
+        new_image_budget (int): Total number of new images to allocate.
+        
     Returns:
-      new_images_list    : a sorted list of new candidate image paths.
+        List[str]: List of candidate frame file paths (full paths).
     """
-    # Get sorted image IDs (keys) from the reconstruction.
+    # Get sorted image IDs from the reconstruction.
     sorted_ids = sort_cameras_by_filename(rec)
     imgs = [rec.images[i] for i in sorted_ids]
 
-    # Compute overlap values for each consecutive pair.
     pair_overlaps = []
     for i in range(len(imgs) - 1):
         ov = overlap_between_two_images(imgs[i], imgs[i+1])
-        if ov is None: ov = 0
+        if ov is None:
+            ov = 0
         pair_overlaps.append(ov)
-    
-    # Identify candidate pairs with overlap below the specified minimum.
-    candidate_pairs = []  # Each item is a tuple (idx1, idx2) from the original frame numbering.
-    deficiencies = []     # How much below min_overlap the current overlap is.
-    
+
+    candidate_pairs = []
+    deficiencies = []
     for i, ov in enumerate(pair_overlaps):
         if ov < min_overlap:
-            # Extract frame numbers from image names (e.g., "00000123.jpeg")
             img_name1 = imgs[i].name
             img_name2 = imgs[i+1].name
             idx1 = _name_to_ind(img_name1)
             idx2 = _name_to_ind(img_name2)
-            # Only consider if there is room to add at least one new image.
             if idx2 - idx1 > 1:
                 deficiency = min_overlap - ov
                 deficiencies.append(deficiency)
                 candidate_pairs.append((idx1, idx2))
-    
+                
     total_deficiency = sum(deficiencies)
-    new_images_set = set()  # Use a set to avoid duplicates.
-    # For each candidate gap, allocate a portion of the new_image_budget.
+    new_images_set = set()
     for (pair, deficiency) in zip(candidate_pairs, deficiencies):
         (i1, i2) = pair
         if total_deficiency > 0:
-            # Proportionally allocate the budget for this gap.
             pair_budget = int(round((deficiency / total_deficiency) * new_image_budget))
         else:
             pair_budget = 0
-        
-        # Cap the budget if the gap contains fewer available images.
+            
         available_slots = i2 - i1 - 1
         pair_budget = min(pair_budget, available_slots)
         
         if pair_budget > 0:
-            # Select candidate new images uniformly in this gap (exclude endpoints)
             indices = np.linspace(i1 + 1, i2 - 1, pair_budget)
             indices = [int(round(x)) for x in indices]
             for ind in indices:
                 new_images_set.add(fmw.ind_to_frame_name(ind))
-                
+    
+    new_images_list = sorted(new_images_set)
+    return new_images_list
+
+
+def get_uniform_frames(fmw, current_image_list, uniform_budget):
+    """
+    Uniformly select candidate frames from the full set of frames that are not
+    already in the current list.
+    
+    Parameters:
+        fmw (FFmpegWrapper): Provides fmw.frames (list of frame filenames) and ind_to_frame_name.
+        current_image_list (list): Current list of full frame paths.
+        uniform_budget (int): Number of new uniform frames to select.
+        
+    Returns:
+        List[str]: List of candidate frame file paths (full paths).
+    """
+    # fmw.frames is assumed to be a sorted list of base filenames (e.g., "00001234.jpeg")
+    all_frames = fmw.frames  
+    # Extract base names from currently selected images.
+    current_basenames = {os.path.basename(x) for x in current_image_list}
+    # Frames that haven't yet been selected:
+    available = [f for f in all_frames if f not in current_basenames]
+    
+    if not available:
+        return []
+    
+    if len(available) <= uniform_budget:
+        selected = available
+    else:
+        step = len(available) / uniform_budget
+        indices = [int(round(i * step)) for i in range(uniform_budget)]
+        # Ensure indices are within bounds:
+        selected = [available[i] for i in indices if i < len(available)]
+    
+    # Convert base filenames to full paths
+    selected_paths = [os.path.join(fmw.tmp_path, name) for name in selected]
+    return selected_paths
+
+
+def compute_new_frame_candidates(rec, current_image_list, fmw, min_overlap, new_image_budget, uniform_budget=10):
+    """
+    Modular strategy: combine multiple selection strategies to propose new candidate frames.
+    
+    Parameters:
+        rec (pycolmap.Reconstruction): The current sparse model reconstruction.
+        current_image_list (list): Current list of image file paths already used.
+        fmw (FFmpegWrapper): Provides frame extraction utility.
+        min_overlap (int): Minimum allowed overlap for the overlap-gap method.
+        new_image_budget (int): Budget to allocate for overlap-gap strategy.
+        uniform_budget (int): Budget to allocate for uniform frame selection.
+        
+    Returns:
+        List[str]: Sorted list of new candidate frame paths.
+    """
+    candidates_overlap = get_overlap_gap_frames(rec, fmw, min_overlap, new_image_budget)
+    candidates_uniform = get_uniform_frames(fmw, current_image_list, uniform_budget)
+    
+    # Placeholder for future strategies (e.g., density based, low coverage region).
+    candidates_low_density = []  # To be implemented later.
+    
+    # Merge all candidates, remove duplicates, and sort.
+    new_images_set = set(candidates_overlap + candidates_uniform + candidates_low_density)
     new_images_list = sorted(new_images_set)
     return new_images_list
 
 def incremental_reconstruction(source_path, db_path, image_path, output_path, image_list, fmw, rec, n_images,
                                quality_threshold_avg=100,  
-                               min_overlap=25, new_image_budget=50):
+                               min_overlap=25, new_image_budget=50, uniform_budget=10):
     """
-    Incrementally improves the reconstruction by adding new images in low-overlap gaps,
-    with an early stopping mechanism based on average and minimum overlap quality.
+    Incrementally improves the reconstruction by adding new images using a combination of
+    selection strategies, with an early stopping mechanism based on quality metrics.
     
     Parameters:
-      source_path             : base directory for the reconstruction process.
-      db_path, image_path, output_path : paths used in the reconstruction.
-      image_list              : current list of image paths.
-      fmw                     : an instance of FFmpegWrapper.
-      rec                     : current reconstruction.
-      n_images                : target number of registered images.
-      quality_threshold_avg   : desired minimum average overlap.
-      min_overlap             : minimum allowed overlap between consecutive images (for candidate selection).
-      new_image_budget        : maximum number of new images to add per iteration.
+      source_path             : Base directory for the reconstruction process.
+      db_path, image_path, output_path : Paths used in the reconstruction.
+      image_list              : Current list of image paths.
+      fmw                     : FFmpegWrapper instance.
+      rec                     : Current reconstruction.
+      n_images                : Target number of registered images.
+      quality_threshold_avg   : Desired minimum average overlap.
+      min_overlap             : Minimum allowed overlap between consecutive images.
+      new_image_budget        : Maximum new images to add for overlap-gap strategy.
+      uniform_budget          : Maximum new images to add for uniform strategy.
     
     Returns:
-      rec2                    : the updated reconstruction.
-      new_images              : candidate images from the last iteration.
+      rec2                    : The updated reconstruction.
+      new_images              : Candidate images from the last iteration.
     """
-    # Initially compute candidate new images.
-    new_images = compute_best_new_images(rec, image_list, fmw, min_overlap, new_image_budget)
+    # Use the new candidate frame strategy manager.
+    new_images = compute_new_frame_candidates(rec, image_list, fmw, min_overlap, new_image_budget, uniform_budget)
     rec2 = rec
     rec2.write_binary(output_path)
-
+    
     while len(rec2.images) < n_images and len(new_images) > 0:
-        new_images = compute_best_new_images(rec2, image_list, fmw, min_overlap, new_image_budget)
-        print(f"Adding {len(new_images)} new images")
+        # Update candidate selection on each iteration.
+        new_images = compute_new_frame_candidates(rec2, image_list, fmw, min_overlap, new_image_budget, uniform_budget)
+        print(f"Adding {len(new_images)} new images based on combined strategies")
         image_list.extend(new_images)
         # Remove duplicates while preserving order.
         image_list = list(dict.fromkeys(image_list))
@@ -257,7 +311,6 @@ def incremental_reconstruction(source_path, db_path, image_path, output_path, im
         rec2.write_binary(output_path)
         
         # Evaluate quality by computing overlap metrics.
-        # Compute overlaps for all consecutive image pairs.
         sorted_ids = sort_cameras_by_filename(rec2)
         imgs = [rec2.images[i] for i in sorted_ids]
         overlaps = [overlap_between_two_images(imgs[i], imgs[i+1]) for i in range(len(imgs)-1)]
@@ -271,7 +324,7 @@ def incremental_reconstruction(source_path, db_path, image_path, output_path, im
         
         print(f"Current average overlap: {avg_overlap}, current minimum overlap: {min_ovl}")
         
-        # Early stopping: if both quality metrics are met, break.
+        # Early stopping: if quality metrics are met, break.
         if (quality_threshold_avg is not None and avg_overlap >= quality_threshold_avg) \
            and (min_overlap is not None and min_ovl >= min_overlap):
             print(f"Early stopping triggered. Average overlap {avg_overlap} exceeds threshold "
@@ -279,6 +332,7 @@ def incremental_reconstruction(source_path, db_path, image_path, output_path, im
             break
 
     return rec2, new_images
+
 
 
 def filter_rec(rec_orig, img_path):
