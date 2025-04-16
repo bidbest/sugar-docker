@@ -13,7 +13,7 @@ def get_video_length(filename):
 
     return duration, frame_count, video_fps
 
-def do_one(source_p, n_frames, clean=False, is_360=False,):
+def do_one(source_p, n_frames, clean=False, is_360=False, minimal=False):
 
     start_time = time.time()
 
@@ -39,6 +39,9 @@ def do_one(source_p, n_frames, clean=False, is_360=False,):
         sfm_command = f"python preprocess/main_video_process.py -s {source_p} -n {n_frames}"
         if clean:
             sfm_command += " -c"
+
+        if minimal:
+            sfm_command += " -m"
             
         print(sfm_command)
         exit_code = os.system(sfm_command)
@@ -114,15 +117,16 @@ def main(args):
     source_p = args.source_path
     n_frames = args.max_number_of_frames
     clean = args.clean
+    minimal = args.minimal
     if not args.all:
-        do_one(source_p, n_frames, clean)
+        do_one(source_p, n_frames, clean, minimal)
     else:
         dirs = os.listdir(source_p)
         for d in dirs:
             tmp = os.path.join(source_p, d)
             if not os.path.isdir(tmp):
                 continue
-            do_one(tmp, n_frames, clean)
+            do_one(tmp, n_frames, clean, minimal)
 
 
 
@@ -131,6 +135,7 @@ if __name__ == '__main__':
     parser.add_argument("--source_path", "-s", required=True, type=str)
     parser.add_argument("--max_number_of_frames", "-n", default=400, type=int)
     parser.add_argument("--clean", "-c", action='store_true')
+    parser.add_argument("--minimal", "-m", action='store_true', help="Use minimal frame selection after final reconstruction")
     parser.add_argument("--all", "-a", action='store_true')
     args = parser.parse_args()
 

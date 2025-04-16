@@ -75,7 +75,7 @@ class FFmpegWrapper:
         """
         # Build select filter for ffmpeg command
         select_filter = "+".join([f"eq(n\\,{f})" for f in frame_indices])
-        cmd = f'ffmpeg -i {self.video_path} -vf "select={select_filter},scale=-1:960" -vsync vfr -pix_fmt rgb8 -q:v 4 {self.output_dir}/%08d.jpeg'
+        cmd = f'ffmpeg -i {self.video_path} -vf "select={select_filter}" -vsync vfr -pix_fmt rgb8 -q:v 4 {self.output_dir}/%08d.jpeg'
         exit_code = os.system(cmd)
         if exit_code != 0:
             print("error extracting frames")

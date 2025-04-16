@@ -11,7 +11,7 @@ import logging
 import pycolmap
 
 from utils import _name_to_ind, make_folders, clean_paths
-from metrics import compute_overlaps_in_rec
+from metrics import compute_overlaps_in_rec, sort_cameras_by_filename, overlap_between_two_images
 
 def extract_features(db_path, image_path, image_list):
     """
@@ -334,7 +334,7 @@ def filter_rec(rec_orig, img_path):
     print(f"Original 3D points: {len(rec_orig.points3D)} -> Filtered 3D points: {len(rec.points3D)}")
     return rec
 
-def do_one(source_path, n_images, clean=False):
+def do_one(source_path, n_images, clean=False, minimal=False, average_overlap=100):
     """
     Main pipeline function to process a video, perform reconstruction, 
     and generate undistorted outputs.
@@ -387,7 +387,7 @@ def do_one(source_path, n_images, clean=False):
         rec2 = pycolmap.Reconstruction(os.path.join(distorted_path, "sparse/0/"))
         frames_list = [os.path.join(fmw.tmp_path, rec2.images[i].name) for i in rec2.images]
     else:
-        rec2, frames_list = incremental_reconstruction(source_path, db_path, fmw.tmp_path, distorted_sparse_path, frames_list, fmw, rec, n_images)
+        rec2, frames_list = incremental_reconstruction(source_path, db_path, fmw.tmp_path, distorted_sparse_path, frames_list, fmw, rec, n_images, quality_threshold_avg=average_overlap)
                             
     print(rec2.summary())
     db_fin_path = os.path.join(distorted_path, "database_final.db")
@@ -398,27 +398,32 @@ def do_one(source_path, n_images, clean=False):
         final = pycolmap.Reconstruction(sparse_path)
         frames_list = [os.path.join(input_p, final.images[i].name) for i in final.images]
     else:
-        frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in rec2.images])
+        if minimal:
+            frame_indices = select_minimal_image_subset(rec2, overlap_threshold=average_overlap)
+        else:
+            frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in rec2.images])
         fmw.extract_specific_frames(frame_indices)
         final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
         final.write_binary(distorted_sparse_0_path)
     
     print(final.summary())
 
-    from metrics import compute_overlaps_in_rec
-    overl, _ = compute_overlaps_in_rec(rec)
-    overl2, _ = compute_overlaps_in_rec(rec2)
-    overlf, _ = compute_overlaps_in_rec(final)
-    print(f"Original SFM: min_overlap: {np.min(overl)}; average_overl: {np.mean(overl)}; reconstruction summary: {rec.summary()}\n\n")
-    print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
-    print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
+    if not minimal:
+        from metrics import compute_overlaps_in_rec
+        overl, _ = compute_overlaps_in_rec(rec)
+        overl2, _ = compute_overlaps_in_rec(rec2)
+        overlf, _ = compute_overlaps_in_rec(final)
+        print(f"Original SFM: min_overlap: {np.min(overl)}; average_overl: {np.mean(overl)}; reconstruction summary: {rec.summary()}\n\n")
+        print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
+        print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
 
-    print("filtering reconstruction....")
-    final_filtered = filter_rec(final, input_p)
-    print(final_filtered.summary())
-    shutil.rmtree(distorted_sparse_0_path)
-    os.makedirs(distorted_sparse_0_path, exist_ok=True)
-    final_filtered.write_binary(distorted_sparse_0_path)
+        print("filtering reconstruction....")
+        final_filtered = filter_rec(final, input_p)
+        print(final_filtered.summary())
+        shutil.rmtree(distorted_sparse_0_path)
+        os.makedirs(distorted_sparse_0_path, exist_ok=True)
+        final_filtered.write_binary(distorted_sparse_0_path)
+
 
     img_undist_cmd = (
         "colmap image_undistorter "
@@ -440,3 +445,35 @@ def do_one(source_path, n_images, clean=False):
         source_file = os.path.join(source_path, "sparse", file)
         destination_file = os.path.join(source_path, "sparse", "0", file)
         shutil.move(source_file, destination_file)
+
+
+def select_minimal_image_subset(rec, overlap_threshold=50):
+    """
+    From a reconstruction, select a minimal subset of image indices with sufficient overlap.
+
+    Parameters:
+        rec: pycolmap.Reconstruction object
+        overlap_threshold (int): minimum required overlap between anchor and candidates
+
+    Returns:
+        List[int]: sorted list of selected frame indices
+    """
+    from metrics import sort_cameras_by_filename, overlap_between_two_images
+
+    sorted_ids = sort_cameras_by_filename(rec)
+    imgs = rec.images
+    kept_ids = []
+    i = 0
+    while i < len(sorted_ids):
+        anchor_id = sorted_ids[i]
+        kept_ids.append(anchor_id)
+        for j in range(i + 1, len(sorted_ids)):
+            ov = overlap_between_two_images(imgs[anchor_id], imgs[sorted_ids[j]])
+            if ov < overlap_threshold:
+                i = j - 1
+                break
+        i += 1
+
+    selected_indices = sorted([_name_to_ind(imgs[i].name) for i in kept_ids])
+    print(f"[Minimal Subset] Selected {len(selected_indices)} frames out of {len(sorted_ids)}")
+    return selected_indices

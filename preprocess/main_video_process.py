@@ -16,12 +16,13 @@ def main(args):
     source_path = args.source_path
     n_images = args.number_of_frames
     clean = args.clean
-    do_one(source_path, n_images, clean)
+    do_one(source_path, n_images, clean, minimal=args.minimal)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Colmap converter")
     parser.add_argument("--source_path", "-s", required=True, type=str)
     parser.add_argument("--number_of_frames", "-n", default=200, type=int)
     parser.add_argument("--clean", "-c", action='store_true')
+    parser.add_argument("--minimal", "-m", action='store_true', help="Use minimal frame selection after final reconstruction")
     args = parser.parse_args()
     main(args)
