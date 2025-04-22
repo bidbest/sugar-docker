@@ -24,5 +24,6 @@ if __name__ == '__main__':
     parser.add_argument("--number_of_frames", "-n", default=200, type=int)
     parser.add_argument("--clean", "-c", action='store_true')
     parser.add_argument("--minimal", "-m", action='store_true', help="Use minimal frame selection after final reconstruction")
+    parser.add_argument("--full", "-f", action='store_true', help="Use all frame selection after final reconstruction")
     args = parser.parse_args()
     main(args)

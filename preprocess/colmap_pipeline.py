@@ -110,6 +110,7 @@ def reconstruct(source_path, db_path, image_path, output_path, image_list, exist
 
     return rec
 
+
 def iterative_reconstruc(source_path, db_path, image_path, output_path, image_list, fmw, video_n, max_iter=7):
     """
     Iteratively attempt reconstruction by gradually increasing the number of frames.
@@ -136,12 +137,15 @@ def iterative_reconstruc(source_path, db_path, image_path, output_path, image_li
     while rec is None and itr < max_iter:
         clean_paths(source_path, video_n, db_path)
         make_folders(source_path)
-        n_frames = int(n_frames * 1.1)
+        n_frames = int(n_frames * 1.3)
         print(f" testing reconstruction with {n_frames} frames")
         frames_list = fmw.get_list_of_n_frames(n_frames)
         rec = reconstruct(source_path, db_path, image_path, output_path, frames_list)
         itr += 1
     
+    if itr >= max_iter:
+        print("can't perform basic reconstruction!")
+
     return rec, frames_list
 
 def get_overlap_gap_frames(rec, fmw, min_overlap, new_image_budget):
@@ -388,7 +392,7 @@ def filter_rec(rec_orig, img_path):
     print(f"Original 3D points: {len(rec_orig.points3D)} -> Filtered 3D points: {len(rec.points3D)}")
     return rec
 
-def do_one(source_path, n_images, clean=False, minimal=False, average_overlap=100):
+def do_one(source_path, n_images, clean=False, minimal=False, full=False, average_overlap=100):
     """
     Main pipeline function to process a video, perform reconstruction, 
     and generate undistorted outputs.
@@ -454,10 +458,17 @@ def do_one(source_path, n_images, clean=False, minimal=False, average_overlap=10
     else:
         if minimal:
             frame_indices = select_minimal_image_subset(rec2, overlap_threshold=average_overlap)
-        else:
-            frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in rec2.images])
+
+        elif not full: # if full we keep all frames
+            frame_indices = select_filtered_image_subset(rec2, max_num_images=n_images)
+            
         fmw.extract_specific_frames(frame_indices)
         final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
+        
+        if final is None:
+            print(" Canno reconstruct with full matcher. Using sequential")
+            final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=True, image_list=[])
+        
         final.write_binary(distorted_sparse_0_path)
     
     print(final.summary())
@@ -501,33 +512,157 @@ def do_one(source_path, n_images, clean=False, minimal=False, average_overlap=10
         shutil.move(source_file, destination_file)
 
 
-def select_minimal_image_subset(rec, overlap_threshold=50):
+def select_minimal_image_subset(rec, overlap_threshold=50, max_gap=30):
     """
-    From a reconstruction, select a minimal subset of image indices with sufficient overlap.
+    Select a minimal subset of image indices while preserving global coverage.
+
+    This version looks at consecutive images (sorted by filename) and 
+    adds an image if the overlap with the previous kept image is below a threshold.
+    Additionally, if the frame index difference (gap) between two images exceeds
+    'max_gap', it will add an image even if the overlap is high. This helps maintain 
+    global coverage in minimal mode.
 
     Parameters:
-        rec: pycolmap.Reconstruction object
-        overlap_threshold (int): minimum required overlap between anchor and candidates
-
+        rec: pycolmap.Reconstruction object.
+        overlap_threshold (int): Minimum required overlap between anchor and candidate.
+        max_gap (int): Maximum allowable gap (in frame index difference) before adding an image.
+        
     Returns:
-        List[int]: sorted list of selected frame indices
+        List[int]: Sorted list of selected frame indices (as integers from filename).
     """
     from metrics import sort_cameras_by_filename, overlap_between_two_images
+    from utils import _name_to_ind
 
     sorted_ids = sort_cameras_by_filename(rec)
     imgs = rec.images
-    kept_ids = []
-    i = 0
-    while i < len(sorted_ids):
-        anchor_id = sorted_ids[i]
-        kept_ids.append(anchor_id)
-        for j in range(i + 1, len(sorted_ids)):
-            ov = overlap_between_two_images(imgs[anchor_id], imgs[sorted_ids[j]])
-            if ov < overlap_threshold:
-                i = j - 1
-                break
-        i += 1
 
+    if not sorted_ids:
+        return []
+
+    # Start with the first image as an anchor.
+    kept_ids = [sorted_ids[0]]
+
+    for current in sorted_ids[1:]:
+        last_kept = kept_ids[-1]
+
+        # Compute overlap between the last kept image and current candidate.
+        ov = overlap_between_two_images(imgs[last_kept], imgs[current])
+        # Get frame indices from filenames (assumes name like "00001234.jpeg")
+        idx_last = _name_to_ind(imgs[last_kept].name)
+        idx_current = _name_to_ind(imgs[current].name)
+        gap = idx_current - idx_last
+
+        # Enforce a maximum gap: if gap > max_gap, add the image to preserve coverage.
+        if gap > max_gap:
+            kept_ids.append(current)
+        else:
+            # Otherwise, if overlap is below threshold (indicating a significant viewpoint change), add it.
+            if ov < overlap_threshold:
+                kept_ids.append(current)
+            # If overlap is high and gap is small, skip the candidate.
+    
+    # Convert the kept image names to indices.
     selected_indices = sorted([_name_to_ind(imgs[i].name) for i in kept_ids])
     print(f"[Minimal Subset] Selected {len(selected_indices)} frames out of {len(sorted_ids)}")
     return selected_indices
+
+
+def select_filtered_image_subset(rec,
+                                  max_num_images=None,
+                                  keep_unique_point_ratio=0.1,
+                                  min_2d3d_ratio_percentile=10,
+                                  min_triangulated_percentile=10,
+                                  min_geometric_distance=0.1):
+    """
+    Select a filtered subset of images based on contribution to the 3D reconstruction.
+
+    Parameters:
+        rec (pycolmap.Reconstruction): The original reconstruction.
+        max_num_images (int): Optional cap on number of images to retain.
+        keep_unique_point_ratio (float): Min ratio of unique 3D points to retain an image.
+        min_2d3d_ratio_percentile (float): Filter out images below this percentile of 2D–3D match ratio.
+        min_triangulated_percentile (float): Filter out images below this percentile of triangulated 3D points.
+        min_geometric_distance (float): Min Euclidean distance to retain geometric diversity.
+
+    Returns:
+        List[int]: Sorted list of selected frame indices (int).
+    """
+    images = rec.images
+    points = rec.points3D
+    image_ids = sort_cameras_by_filename(rec)
+
+    img_stats = []  # List of dicts with info for each image
+
+    # Build point -> image_id map
+    point_to_images = {}
+    for pid, pt in points.items():
+        obs = [el.image_id for el in pt.track.elements]
+        for i in obs:
+            point_to_images.setdefault(i, []).append(pid)
+
+    # Count how many images see each point
+    point_obs_count = {}
+    for pid, pt in points.items():
+        point_obs_count[pid] = len(pt.track.elements)
+
+    # Compute per-image stats
+    for img_id in image_ids:
+        img = images[img_id]
+        n2d = img.num_points2D()
+        n3d = img.num_points3D
+        ratio = n3d / max(n2d, 1e-8)
+
+        seen_points = point_to_images.get(img_id, [])
+        unique_pts = [pid for pid in seen_points if point_obs_count[pid] == 1]
+        unique_ratio = len(unique_pts) / max(len(seen_points), 1e-8)
+
+        cam_pos = img.cam_from_world.translation
+        img_stats.append({
+            "id": img_id,
+            "name": img.name,
+            "index": _name_to_ind(img.name),
+            "num_points2D": n2d,
+            "num_points3D": n3d,
+            "2d3d_ratio": ratio,
+            "unique_ratio": unique_ratio,
+            "cam_pos": cam_pos,
+        })
+
+    # Convert to arrays for filtering
+    ratios = np.array([s["2d3d_ratio"] for s in img_stats])
+    n3ds = np.array([s["num_points3D"] for s in img_stats])
+    uniqs = np.array([s["unique_ratio"] for s in img_stats])
+
+    thr_ratio = np.percentile(ratios, min_2d3d_ratio_percentile)
+    thr_n3d = np.percentile(n3ds, min_triangulated_percentile)
+
+    # Initial keep mask
+    keep = []
+    for s in img_stats:
+        if s["2d3d_ratio"] >= thr_ratio or s["num_points3D"] >= thr_n3d:
+            keep.append(True)
+        elif s["unique_ratio"] >= keep_unique_point_ratio:
+            keep.append(True)
+        else:
+            keep.append(False)
+
+    filtered = [s for s, k in zip(img_stats, keep) if k]
+
+    # Enforce spatial/geometric diversity
+    selected = []
+    selected_positions = []
+
+    for s in sorted(filtered, key=lambda x: -x["num_points3D"]):  # greedy: high contributor first
+        pos = s["cam_pos"]
+        if all(np.linalg.norm(pos - p) > min_geometric_distance for p in selected_positions):
+            selected.append(s)
+            selected_positions.append(pos)
+
+    # Optional cap on total number
+    if max_num_images and len(selected) > max_num_images:
+        selected = selected[:max_num_images]
+
+    selected_indices = sorted([s["index"] for s in selected])
+    print(f"[Filtered Subset] Kept {len(selected_indices)} out of {len(image_ids)} frames.")
+    return selected_indices
+

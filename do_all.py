@@ -13,7 +13,7 @@ def get_video_length(filename):
 
     return duration, frame_count, video_fps
 
-def do_one(source_p, n_frames, clean=False, is_360=False, minimal=False):
+def do_one(source_p, n_frames, clean=False, minimal=False, full=False):
 
     start_time = time.time()
 
@@ -34,14 +34,16 @@ def do_one(source_p, n_frames, clean=False, is_360=False, minimal=False):
     depths_p = os.path.join(source_p, 'd_images')
 
 
-    if not (os.path.isdir(images_p) and os.path.isdir(sparse_p)):
+    if (not (os.path.isdir(images_p) and os.path.isdir(sparse_p)) or clean):
         # extract frames, and perform SFM from video
         sfm_command = f"python preprocess/main_video_process.py -s {source_p} -n {n_frames}"
+        
         if clean:
             sfm_command += " -c"
-
         if minimal:
             sfm_command += " -m"
+        if full:
+            sfm_command += " -f"
             
         print(sfm_command)
         exit_code = os.system(sfm_command)
@@ -102,6 +104,11 @@ def do_one(source_p, n_frames, clean=False, is_360=False, minimal=False):
         f"-s {source_p} -m {model_p} -d {depths_p} " + \
         "--exposure_lr_init 0.001 --exposure_lr_final 0.0001 --exposure_lr_delay_steps 5000 --exposure_lr_delay_mult 0.001 --train_test_exp " + \
         "--data_device cpu --optimizer_type sparse_adam   --antialiasing"
+    
+    if not full:
+        train_cmd += " --iterations 7000"
+
+    print(f"Started trainig with cmd:\n{train_cmd}")
     exit_code = os.system(train_cmd)
     if exit_code != 0:
         print("error while training")
@@ -118,15 +125,16 @@ def main(args):
     n_frames = args.max_number_of_frames
     clean = args.clean
     minimal = args.minimal
+    full = args.full
     if not args.all:
-        do_one(source_p, n_frames, clean, minimal)
+        do_one(source_p, n_frames, clean=clean, minimal=minimal, full=full)
     else:
         dirs = os.listdir(source_p)
         for d in dirs:
             tmp = os.path.join(source_p, d)
             if not os.path.isdir(tmp):
                 continue
-            do_one(tmp, n_frames, clean, minimal)
+            do_one(tmp, n_frames, clean=clean, minimal=minimal)
 
 
 
@@ -136,6 +144,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_number_of_frames", "-n", default=400, type=int)
     parser.add_argument("--clean", "-c", action='store_true')
     parser.add_argument("--minimal", "-m", action='store_true', help="Use minimal frame selection after final reconstruction")
+    parser.add_argument("--full", "-f", action='store_true', help="Use all frame selection after final reconstruction")
     parser.add_argument("--all", "-a", action='store_true')
     args = parser.parse_args()
 
