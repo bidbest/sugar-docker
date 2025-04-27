@@ -461,7 +461,12 @@ def do_one(source_path, n_images, clean=False, minimal=False, full=False, averag
 
         elif not full: # if full we keep all frames
             frame_indices = select_filtered_image_subset(rec2, max_num_images=n_images)
-            
+
+        else:
+            # Keep all images
+            sorted_ids = sort_cameras_by_filename(rec2)
+            frame_indices = sorted([_name_to_ind(imgs[i].name) for i in sorted_ids])
+
         fmw.extract_specific_frames(frame_indices)
         final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
         
@@ -482,8 +487,13 @@ def do_one(source_path, n_images, clean=False, minimal=False, full=False, averag
         print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
         print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
 
-        print("filtering reconstruction....")
-        final_filtered = filter_rec(final, input_p)
+        
+        if not full:
+            print("filtering reconstruction....")
+            final_filtered = filter_rec(final, input_p)
+        else:
+            final_filtered = final
+
         print(final_filtered.summary())
         shutil.rmtree(distorted_sparse_0_path)
         os.makedirs(distorted_sparse_0_path, exist_ok=True)

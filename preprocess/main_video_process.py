@@ -16,7 +16,8 @@ def main(args):
     source_path = args.source_path
     n_images = args.number_of_frames
     clean = args.clean
-    do_one(source_path, n_images, clean, minimal=args.minimal)
+    full = args.full
+    do_one(source_path, n_images, clean, minimal=args.minimal, full=full)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Colmap converter")
