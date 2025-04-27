@@ -4,6 +4,7 @@ Contains functions for performing COLMAP-based 3D reconstruction and refinement.
 """
 
 import os
+import sys
 import shutil
 import copy
 import numpy as np
@@ -465,7 +466,7 @@ def do_one(source_path, n_images, clean=False, minimal=False, full=False, averag
         else:
             # Keep all images
             sorted_ids = sort_cameras_by_filename(rec2)
-            frame_indices = sorted([_name_to_ind(imgs[i].name) for i in sorted_ids])
+            frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in sorted_ids])
 
         fmw.extract_specific_frames(frame_indices)
         final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
@@ -473,7 +474,8 @@ def do_one(source_path, n_images, clean=False, minimal=False, full=False, averag
         if final is None:
             print(" Canno reconstruct with full matcher. Using sequential")
             final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=True, image_list=[])
-        
+            # sys.exit(1)
+
         final.write_binary(distorted_sparse_0_path)
     
     print(final.summary())
