@@ -10,6 +10,7 @@ import copy
 import numpy as np
 import logging
 import pycolmap
+from typing import Dict, List, Tuple, Set, Optional
 
 from utils import _name_to_ind, make_folders, clean_paths
 from metrics import compute_overlaps_in_rec, sort_cameras_by_filename, overlap_between_two_images
@@ -112,7 +113,7 @@ def reconstruct(source_path, db_path, image_path, output_path, image_list, exist
     return rec
 
 
-def iterative_reconstruc(source_path, db_path, image_path, output_path, image_list, fmw, video_n, max_iter=7):
+def iterative_reconstruc(source_path, db_path, image_path, output_path, image_list, fmw, video_n, max_iter=15):
     """
     Iteratively attempt reconstruction by gradually increasing the number of frames.
     
@@ -129,7 +130,7 @@ def iterative_reconstruc(source_path, db_path, image_path, output_path, image_li
     Returns:
         Tuple (reconstruction, frames_list) from the successful iteration.
     """
-    n_frames = int(fmw.duration)
+    n_frames = int(fmw.duration / 2)
     print(f" testing reconstruction with {n_frames} frames")
     frames_list = fmw.get_list_of_n_frames(n_frames)
     rec = reconstruct(source_path, db_path, image_path, output_path, frames_list)
@@ -362,8 +363,8 @@ def filter_rec(rec_orig, img_path):
     n_views = np.array([pcd[p].track.length() for p in pcd])
     rep_error = np.array([pcd[p].error for p in pcd])
 
-    thr_views = np.percentile(n_views, 10)
-    thr_error = np.percentile(rep_error, 90)
+    thr_views = np.percentile(n_views, 5)
+    thr_error = np.percentile(rep_error, 95)
 
     # Remove 3D points that do not meet quality criteria.
     to_remove = np.where((((n_views > thr_views) * (rep_error < thr_error)) * 1) == 0)[0]
@@ -393,15 +394,43 @@ def filter_rec(rec_orig, img_path):
     print(f"Original 3D points: {len(rec_orig.points3D)} -> Filtered 3D points: {len(rec.points3D)}")
     return rec
 
+def interpolate_all_frames(rec, fmw):
+    """
+    Interpolate camera poses for all frames in the video.
+    
+    Parameters:
+        rec: COLMAP reconstruction object
+        fmw: FFmpegWrapper instance
+        
+    Returns:
+        Dictionary mapping frame indices to (camera_pose, confidence)
+    """
+    from pose_interpolation import interpolate_camera_poses, validate_interpolation
+    
+    # Validate interpolation accuracy
+    validation_metrics = validate_interpolation(rec, fmw)
+    print("Interpolation validation metrics:")
+    for key, value in validation_metrics.items():
+        print(f"  {key}: {value:.4f}")
+    
+    # Interpolate poses for all frames
+    all_poses = interpolate_camera_poses(rec, fmw)
+    print(f"Interpolated poses for {len(all_poses)} frames")
+    
+    return all_poses
+
 def do_one(source_path, n_images, clean=False, minimal=False, full=False, average_overlap=100):
     """
-    Main pipeline function to process a video, perform reconstruction, 
+    Main pipeline function to process a video, perform reconstruction,
     and generate undistorted outputs.
     
     Parameters:
         source_path (str): Base directory containing video and images.
         n_images (int): Target number of images for reconstruction.
         clean (bool, optional): Flag to clean existing paths before processing.
+        minimal (bool, optional): Use minimal frame selection after final reconstruction.
+        full (bool, optional): Use all frame selection after final reconstruction.
+        average_overlap (int, optional): Target average overlap between frames.
     """
     files_n = os.listdir(source_path)
     video_n = None
@@ -502,6 +531,306 @@ def do_one(source_path, n_images, clean=False, minimal=False, full=False, averag
         final_filtered.write_binary(distorted_sparse_0_path)
 
 
+    img_undist_cmd = (
+        "colmap image_undistorter "
+        " --image_path " + input_p +
+        " --input_path " + distorted_sparse_0_path +
+        " --output_path " + source_path +
+        " --output_type COLMAP"
+    )
+    exit_code = os.system(img_undist_cmd)
+    if exit_code != 0:
+        logging.error(f"Mapper failed with code {exit_code}. Exiting.")
+        exit(exit_code)
+
+    files = os.listdir(source_path + "/sparse")
+    os.makedirs(source_path + "/sparse/0", exist_ok=True)
+    for file in files:
+        if file == '0':
+            continue
+        source_file = os.path.join(source_path, "sparse", file)
+        destination_file = os.path.join(source_path, "sparse", "0", file)
+        shutil.move(source_file, destination_file)
+
+def evaluate_frame_contribution(reconstruction: pycolmap.Reconstruction,
+                               frame_indices: List[int]) -> Dict[int, float]:
+    """
+    Evaluate the contribution of each frame to the reconstruction quality.
+    
+    Parameters:
+        reconstruction: COLMAP reconstruction object
+        frame_indices: List of frame indices to evaluate
+        
+    Returns:
+        Dictionary mapping frame indices to contribution scores
+    """
+    from utils import _name_to_ind
+    from metrics import compute_overlaps_in_rec
+    
+    # Get mapping from frame indices to image IDs
+    frame_to_image = {}
+    for image_id in reconstruction.images:
+        image = reconstruction.images[image_id]
+        frame_idx = _name_to_ind(image.name)
+        frame_to_image[frame_idx] = image_id
+    
+    # Compute baseline overlap metrics
+    baseline_overlaps, _ = compute_overlaps_in_rec(reconstruction)
+    baseline_min = np.min(baseline_overlaps) if baseline_overlaps else 0
+    baseline_avg = np.mean(baseline_overlaps) if baseline_overlaps else 0
+    baseline_points = len(reconstruction.points3D)
+    
+    # Evaluate contribution of each frame
+    contributions = {}
+    for frame_idx in frame_indices:
+        if frame_idx not in frame_to_image:
+            # Frame not in reconstruction
+            contributions[frame_idx] = 0.0
+            continue
+        
+        image_id = frame_to_image[frame_idx]
+        
+        # Create a copy of the reconstruction without this frame
+        rec_copy = pycolmap.Reconstruction(reconstruction)
+        rec_copy.deregister_image(image_id)
+        
+        # Compute overlap metrics without this frame
+        new_overlaps, _ = compute_overlaps_in_rec(rec_copy)
+        new_min = np.min(new_overlaps) if new_overlaps else 0
+        new_avg = np.mean(new_overlaps) if new_overlaps else 0
+        new_points = len(rec_copy.points3D)
+        
+        # Compute contribution score based on changes in metrics
+        # Higher score means more important frame
+        min_overlap_change = baseline_min - new_min
+        avg_overlap_change = baseline_avg - new_avg
+        points_change = baseline_points - new_points
+        
+        # Normalize and combine metrics
+        contribution = (
+            0.3 * min_overlap_change / (baseline_min + 1e-6) +
+            0.3 * avg_overlap_change / (baseline_avg + 1e-6) +
+            0.4 * points_change / (baseline_points + 1e-6)
+        )
+        
+        contributions[frame_idx] = max(0.0, contribution)
+    
+    return contributions
+
+def prune_low_contribution_frames(reconstruction: pycolmap.Reconstruction,
+                                 threshold: float = 0.05) -> pycolmap.Reconstruction:
+    """
+    Remove frames that don't contribute significantly to the reconstruction.
+    
+    Parameters:
+        reconstruction: COLMAP reconstruction object
+        threshold: Minimum contribution threshold
+        
+    Returns:
+        Pruned reconstruction
+    """
+    from utils import _name_to_ind
+    
+    # Get frame indices
+    frame_indices = []
+    for image_id in reconstruction.images:
+        image = reconstruction.images[image_id]
+        frame_idx = _name_to_ind(image.name)
+        frame_indices.append(frame_idx)
+    
+    # Evaluate frame contributions
+    contributions = evaluate_frame_contribution(reconstruction, frame_indices)
+    
+    # Identify frames to remove
+    frames_to_remove = [idx for idx, score in contributions.items() if score < threshold]
+    print(f"Removing {len(frames_to_remove)} low-contribution frames out of {len(frame_indices)}")
+    
+    # Create a copy of the reconstruction
+    pruned_rec = pycolmap.Reconstruction(reconstruction)
+    
+    # Remove low-contribution frames
+    frame_to_image = {}
+    for image_id in reconstruction.images:
+        image = reconstruction.images[image_id]
+        frame_idx = _name_to_ind(image.name)
+        frame_to_image[frame_idx] = image_id
+    
+    for frame_idx in frames_to_remove:
+        if frame_idx in frame_to_image:
+            image_id = frame_to_image[frame_idx]
+            pruned_rec.deregister_image(image_id)
+    
+    return pruned_rec
+
+def do_one_robust(source_path, n_images, clean=False, minimal=False, full=False, average_overlap=100,
+                 random_ratio=0.2, pruning_threshold=0.05, coverage_weight=0.4, triangulation_weight=0.3,
+                 diversity_weight=0.2, confidence_weight=0.1):
+    """
+    Enhanced pipeline function to process a video, perform reconstruction with robust frame selection,
+    and generate undistorted outputs. This version uses camera pose interpolation to make better
+    decisions about which frames to include.
+    
+    Parameters:
+        source_path (str): Base directory containing video and images.
+        n_images (int): Target number of images for reconstruction.
+        clean (bool, optional): Flag to clean existing paths before processing.
+        minimal (bool, optional): Use minimal frame selection after final reconstruction.
+        full (bool, optional): Use all frame selection after final reconstruction.
+        average_overlap (int, optional): Target average overlap between frames.
+        random_ratio (float, optional): Ratio of frames to select randomly.
+        pruning_threshold (float, optional): Threshold for pruning low-contribution frames.
+        coverage_weight (float, optional): Weight for coverage score in frame selection.
+        triangulation_weight (float, optional): Weight for triangulation score in frame selection.
+        diversity_weight (float, optional): Weight for diversity score in frame selection.
+        confidence_weight (float, optional): Weight for confidence score in frame selection.
+    """
+    files_n = os.listdir(source_path)
+    video_n = None
+    for f in files_n:
+        if f.split(".")[-1] in ["mp4", "MP4"]:
+            video_n = f
+            break
+
+    if video_n is None and (not ("input" in files_n)):
+        exit(1)
+
+    video_p = os.path.join(source_path, video_n)
+    input_p = os.path.join(source_path, 'input')
+    distorted_path = os.path.join(source_path, "distorted")
+    distorted_sparse_path = os.path.join(distorted_path, "sparse")
+    distorted_sparse_final_path = os.path.join(distorted_path, "sparse_final")
+    sparse_path = os.path.join(source_path, "sparse/0")
+    db_path = os.path.join(distorted_path, "database.db")
+    
+    if clean:
+        clean_paths(source_path, video_n, db_path)
+    make_folders(source_path)
+
+    from video_processing import FFmpegWrapper
+    fmw = FFmpegWrapper(video_p, input_p)
+
+    n_frames = int(fmw.duration)
+    frames_list = fmw.get_list_of_n_frames(n_frames)
+
+    # Step 1: Get initial reconstruction (same as in do_one)
+    if os.path.isfile(os.path.join(distorted_path, "orig_distorted", "images.bin")):
+        print("Loading original reconstruction")
+        rec = pycolmap.Reconstruction(os.path.join(distorted_path, "orig_distorted"))
+        frames_list = [os.path.join(fmw.tmp_path, rec.images[i].name) for i in rec.images]
+    else:
+        rec, frames_list = iterative_reconstruc(source_path, db_path, fmw.tmp_path, distorted_sparse_path, frames_list, fmw, video_n)
+        rec.write_binary(distorted_sparse_path)
+        shutil.copytree(distorted_sparse_path, os.path.join(os.path.dirname(distorted_sparse_path), "orig_distorted"))
+    
+    print(rec.summary())
+
+    # Step 2: Interpolate camera poses for all frames
+    print("Interpolating camera poses for all frames...")
+    all_poses = interpolate_all_frames(rec, fmw)
+    
+    # Step 3: Use the interpolated poses to guide the incremental reconstruction
+    if os.path.isfile(os.path.join(distorted_path, "sparse/0/", "images.bin")):
+        print("Loading dense reconstruction")
+        rec2 = pycolmap.Reconstruction(os.path.join(distorted_path, "sparse/0/"))
+        frames_list = [os.path.join(fmw.tmp_path, rec2.images[i].name) for i in rec2.images]
+    else:
+        # Use advanced frame selection strategy
+        from visibility_prediction import compute_visibility_sampled
+        from frame_selection import adaptive_frame_selection
+        
+        print("Computing visibility for all frames...")
+        camera_id = next(iter(rec.cameras))
+        camera = rec.cameras[camera_id]
+        all_visibility = compute_visibility_sampled(rec, all_poses, camera)
+        
+        n_new_frames = n_images - len(frames_list)
+        n_new_frames = max(1, n_new_frames)
+
+        print("Selecting frames using adaptive strategy...")
+        selected_frames = adaptive_frame_selection(
+            rec,
+            all_poses,
+            all_visibility,
+            n_frames=n_new_frames,
+            random_ratio=random_ratio,
+            coverage_weight=coverage_weight,
+            triangulation_weight=triangulation_weight,
+            diversity_weight=diversity_weight,
+            confidence_weight=confidence_weight
+        )
+        print(f"Selected {len(selected_frames)} frames for reconstruction")
+        
+        # Convert frame indices to file paths
+        selected_frames_paths = [fmw.ind_to_frame_name(idx) for idx in selected_frames]
+        
+        # Add selected frames to the existing frames list
+        frames_list.extend(selected_frames_paths)
+        
+        # Remove duplicates while preserving order
+        frames_list = list(dict.fromkeys(frames_list))
+        
+        # Perform reconstruction with the selected frames
+        print("Performing reconstruction with selected frames...")
+        rec2 = reconstruct(source_path, db_path, fmw.tmp_path, distorted_sparse_path, frames_list, distorted_sparse_path, clean=False)
+        
+        if rec2 is None:
+            print("Enhanced frame selection failed, falling back to incremental reconstruction...")
+            rec2, frames_list = incremental_reconstruction(source_path, db_path, fmw.tmp_path, distorted_sparse_path, frames_list, fmw, rec, n_images, quality_threshold_avg=average_overlap)
+        else:
+            # Prune low-contribution frames using advanced pruning
+            print("Pruning low-contribution frames using advanced analysis...")
+            from frame_selection import prune_frames
+            rec2, removed_frames = prune_frames(rec2, threshold=pruning_threshold)
+            rec2.write_binary(distorted_sparse_path)
+            
+            # Update frames list after pruning
+            frames_list = [os.path.join(fmw.tmp_path, rec2.images[i].name) for i in rec2.images]
+            
+            print(f"Removed {len(removed_frames)} frames, keeping {len(frames_list)} frames")
+                            
+    print(rec2.summary())
+    
+    # Step 4: Final reconstruction (same as in do_one)
+    db_fin_path = os.path.join(distorted_path, "database_final.db")
+    distorted_sparse_0_path = os.path.join(distorted_sparse_path, "0")
+    os.makedirs(distorted_sparse_0_path, exist_ok=True)
+    
+    if os.path.isfile(os.path.join(sparse_path, "images.bin")):
+        print("Loading final reconstruction")
+        final = pycolmap.Reconstruction(sparse_path)
+        frames_list = [os.path.join(input_p, final.images[i].name) for i in final.images]
+    else:
+
+        sorted_ids = sort_cameras_by_filename(rec2)
+        frame_indices = sorted([_name_to_ind(rec2.images[i].name) for i in sorted_ids])
+
+        fmw.extract_specific_frames(frame_indices)
+        final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=False, image_list=[])
+        
+        if final is None:
+            print("Cannot reconstruct with full matcher. Using sequential")
+            final = reconstruct(source_path, db_fin_path, input_p, distorted_sparse_final_path, sequential=True, image_list=[])
+
+        final.write_binary(distorted_sparse_0_path)
+    
+    print(final.summary())
+
+    if not minimal:
+        from metrics import compute_overlaps_in_rec
+        overl, _ = compute_overlaps_in_rec(rec)
+        overl2, _ = compute_overlaps_in_rec(rec2)
+        overlf, _ = compute_overlaps_in_rec(final)
+        print(f"Original SFM: min_overlap: {np.min(overl)}; average_overl: {np.mean(overl)}; reconstruction summary: {rec.summary()}\n\n")
+        print(f"Incremental SFM: min_overlap: {np.min(overl2)}; average_overl: {np.mean(overl2)}; reconstruction summary: {rec2.summary()}\n\n")
+        print(f"Final SFM: min_overlap: {np.min(overlf)}; average_overl: {np.mean(overlf)}; reconstruction summary: {final.summary()}\n\n")
+        final_filtered = final
+
+        print(final_filtered.summary())
+        shutil.rmtree(distorted_sparse_0_path)
+        os.makedirs(distorted_sparse_0_path, exist_ok=True)
+        final_filtered.write_binary(distorted_sparse_0_path)
+
+    # Step 5: Image undistortion (same as in do_one)
     img_undist_cmd = (
         "colmap image_undistorter "
         " --image_path " + input_p +

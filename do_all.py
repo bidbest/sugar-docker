@@ -36,7 +36,7 @@ def do_one(source_p, n_frames, clean=False, minimal=False, full=False):
 
     if (not (os.path.isdir(images_p) and os.path.isdir(sparse_p)) or clean):
         # extract frames, and perform SFM from video
-        sfm_command = f"python preprocess/main_video_process.py -s {source_p} -n {n_frames}"
+        sfm_command = f"python preprocess/main_video_process.py -s {source_p} -n {n_frames} --robust"
         
         if clean:
             sfm_command += " -c"
